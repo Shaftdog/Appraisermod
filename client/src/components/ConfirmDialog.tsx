@@ -8,24 +8,33 @@ import { RiskStatus } from '@/types';
 interface ConfirmDialogProps {
   status: RiskStatus;
   openIssues: number;
-  onConfirm: (overrideReason?: string) => void;
+  onConfirm: (overrideReason?: string) => Promise<void> | void;
   onCancel: () => void;
 }
 
 export function ConfirmDialog({ status, openIssues, onConfirm, onCancel }: ConfirmDialogProps) {
   const [overrideReason, setOverrideReason] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const hasRedIssues = status === 'red';
   const requiresOverride = hasRedIssues && openIssues > 0;
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (requiresOverride && !overrideReason.trim()) {
       setError('Override reason is required for critical issues.');
       return;
     }
 
-    onConfirm(overrideReason.trim() || undefined);
+    try {
+      setSubmitting(true);
+      await onConfirm(overrideReason.trim() || undefined);
+    } catch (error) {
+      // Error handling is done by the parent component
+      console.error('Sign-off failed:', error);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getIssuesSummary = () => {
@@ -107,6 +116,7 @@ export function ConfirmDialog({ status, openIssues, onConfirm, onCancel }: Confi
             <Button 
               variant="outline" 
               onClick={onCancel}
+              disabled={submitting}
               className="flex-1"
               data-testid="button-cancel-signoff"
             >
@@ -114,10 +124,11 @@ export function ConfirmDialog({ status, openIssues, onConfirm, onCancel }: Confi
             </Button>
             <Button 
               onClick={handleConfirm}
+              disabled={submitting}
               className="flex-1"
               data-testid="button-confirm-signoff"
             >
-              Confirm Sign-off
+              {submitting ? 'Signing...' : 'Confirm Sign-off'}
             </Button>
           </div>
         </div>
