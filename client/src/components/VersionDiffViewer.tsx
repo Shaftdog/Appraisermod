@@ -81,6 +81,15 @@ export function VersionDiffViewer({ versions, currentData, onClose, open }: Vers
     }
   };
 
+  const formatValue = (value: any): string => {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    if (typeof value === 'object') {
+      return JSON.stringify(value, null, 2);
+    }
+    return String(value);
+  };
+
   return (
     <Dialog open={open} onOpenChange={() => onClose()}>
       <DialogContent className="w-full max-w-4xl max-h-[90vh] overflow-hidden" data-testid="dialog-version-diff">
@@ -187,27 +196,27 @@ export function VersionDiffViewer({ versions, currentData, onClose, open }: Vers
                         </span>
                         {diff.status === 'changed' && (
                           <>
-                            <span className="text-red-600 line-through">
-                              {String(diff.oldValue)}
+                            <span className="text-red-600 line-through font-mono text-xs">
+                              {formatValue(diff.oldValue)}
                             </span>
-                            <span className="text-green-600 font-medium">
-                              → {String(diff.newValue)}
+                            <span className="text-green-600 font-medium font-mono text-xs">
+                              → {formatValue(diff.newValue)}
                             </span>
                           </>
                         )}
                         {diff.status === 'added' && (
-                          <span className="text-green-600 font-medium">
-                            {String(diff.newValue)}
+                          <span className="text-green-600 font-medium font-mono text-xs">
+                            {formatValue(diff.newValue)}
                           </span>
                         )}
                         {diff.status === 'removed' && (
-                          <span className="text-red-600 line-through">
-                            {String(diff.oldValue)}
+                          <span className="text-red-600 line-through font-mono text-xs">
+                            {formatValue(diff.oldValue)}
                           </span>
                         )}
                         {diff.status === 'unchanged' && (
-                          <span className="text-foreground">
-                            {String(diff.newValue)}
+                          <span className="text-foreground font-mono text-xs">
+                            {formatValue(diff.newValue)}
                           </span>
                         )}
                       </div>
