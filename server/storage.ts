@@ -133,6 +133,15 @@ export class MemStorage implements IStorage {
     tab.qc.lastReviewedBy = signedBy;
     tab.qc.lastReviewedAt = new Date().toISOString();
 
+    // When a tab is signed off, resolve its QC status to green
+    // This ensures that signed-off tabs don't continue to affect overall status
+    tab.qc.status = 'green';
+    tab.qc.openIssues = 0;
+    if (overrideReason) {
+      // Track that issues were overridden
+      tab.qc.overriddenIssues = tab.qc.openIssues || 1;
+    }
+
     // Recalculate overall status
     order.overallStatus = this.calculateOverallStatus(order);
 
