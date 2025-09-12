@@ -1,4 +1,7 @@
 import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus } from "@shared/schema";
+import { users, orders, versions } from "@shared/schema";
+import { db } from "./db";
+import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
@@ -20,99 +23,169 @@ export interface IStorage {
   updateTabQC(orderId: string, tabKey: TabKey, qc: any): Promise<OrderData>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private orders: Map<string, OrderData>;
-  private versions: Map<string, Version>;
-  private dataFile: string;
-
+export class DatabaseStorage implements IStorage {
   constructor() {
-    this.users = new Map();
-    this.orders = new Map();
-    this.versions = new Map();
-    this.dataFile = path.resolve(process.cwd(), 'data', 'storage.json');
-    this.loadSampleData();
+    this.initializeWithSampleData();
   }
 
-  private loadSampleData() {
+  private async initializeWithSampleData() {
     try {
+      // Check if we already have sample data
+      const existingOrders = await db.select().from(orders).limit(1);
+      if (existingOrders.length > 0) {
+        return; // Data already exists
+      }
+
       const samplePath = path.resolve(process.cwd(), 'client', 'src', 'data', 'order-sample.json');
       if (fs.existsSync(samplePath)) {
         const data = JSON.parse(fs.readFileSync(samplePath, 'utf-8'));
-        this.orders.set(data.id, data);
+        await db.insert(orders).values({
+          id: data.id,
+          orderNumber: data.orderNumber,
+          clientName: data.clientName,
+          dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+          overallStatus: data.overallStatus as 'green' | 'yellow' | 'red',
+          tabs: data.tabs,
+        });
+
+        // Insert sample versions if any exist in the data
+        const versionsToInsert = [];
+        for (const [tabKey, tabData] of Object.entries(data.tabs as any)) {
+          const typedTabData = tabData as any;
+          if (typedTabData.versions && Array.isArray(typedTabData.versions)) {
+            for (const version of typedTabData.versions) {
+              versionsToInsert.push({
+                id: version.id,
+                orderId: data.id,
+                tabKey,
+                label: version.label,
+                author: version.author,
+                data: version.data,
+                createdAt: new Date(version.createdAt),
+              });
+            }
+          }
+        }
+
+        if (versionsToInsert.length > 0) {
+          await db.insert(versions).values(versionsToInsert);
+        }
+
+        console.log('Sample data loaded into database');
       }
     } catch (error) {
-      console.log('No sample data found, starting with empty storage');
+      console.log('No sample data found or error loading:', error);
     }
   }
 
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db
+      .insert(users)
+      .values({
+        ...insertUser,
+        role: (insertUser.role || 'appraiser') as 'appraiser' | 'reviewer' | 'admin',
+      })
+      .returning();
     return user;
   }
 
   async getOrder(id: string): Promise<OrderData | undefined> {
-    return this.orders.get(id);
+    const [order] = await db.select().from(orders).where(eq(orders.id, id));
+    if (!order) return undefined;
+
+    // Convert database order to OrderData format
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      clientName: order.clientName,
+      dueDate: order.dueDate?.toISOString(),
+      overallStatus: order.overallStatus,
+      tabs: order.tabs as any, // The tabs are stored as JSONB
+    };
   }
 
   async createOrder(order: InsertOrder): Promise<OrderData> {
     const id = randomUUID();
-    const orderData: OrderData = { 
-      ...order, 
-      id,
-      dueDate: order.dueDate?.toISOString(),
-      overallStatus: (order.overallStatus as RiskStatus) || 'green',
-      tabs: {} as any 
+    const [newOrder] = await db
+      .insert(orders)
+      .values({
+        id,
+        orderNumber: order.orderNumber,
+        clientName: order.clientName,
+        dueDate: order.dueDate ? new Date(order.dueDate) : undefined,
+        overallStatus: order.overallStatus as 'green' | 'yellow' | 'red',
+        tabs: order.tabs,
+      })
+      .returning();
+
+    return {
+      id: newOrder.id,
+      orderNumber: newOrder.orderNumber,
+      clientName: newOrder.clientName,
+      dueDate: newOrder.dueDate?.toISOString(),
+      overallStatus: newOrder.overallStatus,
+      tabs: newOrder.tabs as any,
     };
-    this.orders.set(id, orderData);
-    return orderData;
   }
 
-  async updateOrder(id: string, updates: Partial<OrderData>): Promise<OrderData> {
-    const existing = this.orders.get(id);
-    if (!existing) {
-      throw new Error('Order not found');
+  async updateOrder(id: string, orderUpdate: Partial<OrderData>): Promise<OrderData> {
+    const updateData: any = { ...orderUpdate };
+    if (updateData.dueDate) {
+      updateData.dueDate = new Date(updateData.dueDate);
     }
-    const updated = { ...existing, ...updates };
-    this.orders.set(id, updated);
-    return updated;
+    
+    const [updated] = await db
+      .update(orders)
+      .set(updateData)
+      .where(eq(orders.id, id))
+      .returning();
+
+    return {
+      id: updated.id,
+      orderNumber: updated.orderNumber,
+      clientName: updated.clientName,
+      dueDate: updated.dueDate?.toISOString(),
+      overallStatus: updated.overallStatus,
+      tabs: updated.tabs as any,
+    };
   }
 
   async getVersions(orderId: string, tabKey: TabKey): Promise<Version[]> {
-    return Array.from(this.versions.values()).filter(
-      v => v.orderId === orderId && v.tabKey === tabKey
-    );
+    return await db
+      .select()
+      .from(versions)
+      .where(and(eq(versions.orderId, orderId), eq(versions.tabKey, tabKey)));
   }
 
   async createVersion(version: InsertVersion): Promise<Version> {
     const id = randomUUID();
-    const versionData: Version = {
-      ...version,
-      id,
-      createdAt: new Date()
-    };
-    this.versions.set(id, versionData);
-    return versionData;
+    const [newVersion] = await db
+      .insert(versions)
+      .values({
+        ...version,
+        id,
+      })
+      .returning();
+    return newVersion;
   }
 
   async getVersion(id: string): Promise<Version | undefined> {
-    return this.versions.get(id);
+    const [version] = await db.select().from(versions).where(eq(versions.id, id));
+    return version || undefined;
   }
 
   async signoffTab(orderId: string, tabKey: TabKey, signedBy: string, overrideReason?: string): Promise<OrderData> {
-    const order = this.orders.get(orderId);
+    const order = await this.getOrder(orderId);
     if (!order) {
       throw new Error('Order not found');
     }
@@ -145,12 +218,11 @@ export class MemStorage implements IStorage {
     // Recalculate overall status
     order.overallStatus = this.calculateOverallStatus(order);
 
-    this.orders.set(orderId, order);
-    return order;
+    return await this.updateOrder(orderId, order);
   }
 
   async updateTabQC(orderId: string, tabKey: TabKey, qc: any): Promise<OrderData> {
-    const order = this.orders.get(orderId);
+    const order = await this.getOrder(orderId);
     if (!order) {
       throw new Error('Order not found');
     }
@@ -163,8 +235,7 @@ export class MemStorage implements IStorage {
     tab.qc = { ...tab.qc, ...qc };
     order.overallStatus = this.calculateOverallStatus(order);
 
-    this.orders.set(orderId, order);
-    return order;
+    return await this.updateOrder(orderId, order);
   }
 
   private calculateOverallStatus(order: OrderData): RiskStatus {
@@ -176,4 +247,4 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

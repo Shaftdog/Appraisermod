@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, jsonb, timestamp, integer } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -7,6 +8,11 @@ export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  email: text("email").notNull().unique(),
+  role: text("role").$type<'appraiser' | 'reviewer' | 'admin'>().notNull().default('appraiser'),
+  fullName: text("full_name").notNull(),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 });
 
 export const orders = pgTable("orders", {
@@ -30,9 +36,29 @@ export const versions = pgTable("versions", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
 });
 
+// Relations
+export const usersRelations = relations(users, ({ many }) => ({
+  orders: many(orders),
+  versions: many(versions),
+}));
+
+export const ordersRelations = relations(orders, ({ one, many }) => ({
+  versions: many(versions),
+}));
+
+export const versionsRelations = relations(versions, ({ one }) => ({
+  order: one(orders, {
+    fields: [versions.orderId],
+    references: [orders.id],
+  }),
+}));
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
+  email: true,
+  fullName: true,
+  role: true,
 });
 
 export const insertOrderSchema = createInsertSchema(orders).omit({
@@ -46,12 +72,20 @@ export const insertVersionSchema = createInsertSchema(versions).omit({
   createdAt: true,
 });
 
+// Login schema for authentication
+export const loginUserSchema = z.object({
+  username: z.string().min(1, "Username is required"),
+  password: z.string().min(1, "Password is required"),
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type LoginUser = z.infer<typeof loginUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
 export type InsertVersion = z.infer<typeof insertVersionSchema>;
 export type Version = typeof versions.$inferSelect;
+export type UserRole = 'appraiser' | 'reviewer' | 'admin';
 
 // Frontend types
 export type RiskStatus = 'green' | 'yellow' | 'red';
