@@ -1,0 +1,367 @@
+{
+  "id": "order-123",
+  "orderNumber": "APR-2024-001",
+  "clientName": "Sunrise Properties LLC",
+  "dueDate": "2024-03-15T00:00:00Z",
+  "overallStatus": "red",
+  "tabs": {
+    "orderSummary": {
+      "key": "orderSummary",
+      "qc": {
+        "status": "green",
+        "openIssues": 0,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Sarah Chen",
+        "lastReviewedAt": "2024-03-10T14:30:00Z"
+      },
+      "signoff": {
+        "state": "signed-appraiser",
+        "signedBy": "John Smith",
+        "signedAt": "2024-03-10T14:30:00Z"
+      },
+      "versions": [
+        {
+          "id": "v1-summary",
+          "label": "v1 • 2024-03-08 14:15",
+          "author": "John Smith",
+          "createdAt": "2024-03-08T14:15:00Z",
+          "data": {
+            "propertyAddress": "1234 Oak Street, Austin, TX 78701",
+            "propertyType": "Single Family Residence",
+            "squareFootage": "2,400 sq ft",
+            "loanPurpose": "Purchase",
+            "effectiveDate": "March 5, 2024",
+            "reportType": "Appraisal Report",
+            "contractPrice": "$480,000"
+          }
+        },
+        {
+          "id": "v2-summary",
+          "label": "v2 • 2024-03-09 10:33",
+          "author": "John Smith",
+          "createdAt": "2024-03-09T10:33:00Z",
+          "data": {
+            "propertyAddress": "1234 Oak Street, Austin, TX 78701",
+            "propertyType": "Single Family Residence",
+            "squareFootage": "2,450 sq ft",
+            "yearBuilt": "1995",
+            "loanPurpose": "Purchase",
+            "effectiveDate": "March 5, 2024",
+            "reportType": "Appraisal Report",
+            "contractPrice": "$485,000"
+          }
+        }
+      ],
+      "currentData": {
+        "propertyAddress": "1234 Oak Street, Austin, TX 78701",
+        "propertyType": "Single Family Residence",
+        "squareFootage": "2,450 sq ft",
+        "yearBuilt": "1995",
+        "loanPurpose": "Purchase",
+        "effectiveDate": "March 5, 2024",
+        "reportType": "Appraisal Report",
+        "contractPrice": "$485,000"
+      }
+    },
+    "subject": {
+      "key": "subject",
+      "qc": {
+        "status": "green",
+        "openIssues": 0,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Sarah Chen",
+        "lastReviewedAt": "2024-03-09T16:20:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-subject",
+          "label": "v1 • 2024-03-08 15:45",
+          "author": "John Smith",
+          "createdAt": "2024-03-08T15:45:00Z",
+          "data": {
+            "legalDescription": "Lot 15, Block B, Sunrise Hills Subdivision, according to the plat thereof recorded in Volume 45, Page 123 of the Plat Records of Travis County, Texas.",
+            "zoning": "SF-3 Single Family Residential"
+          }
+        }
+      ],
+      "currentData": {
+        "legalDescription": "Lot 15, Block B, Sunrise Hills Subdivision, according to the plat thereof recorded in Volume 45, Page 123 of the Plat Records of Travis County, Texas.",
+        "zoning": "SF-3 Single Family Residential"
+      }
+    },
+    "market": {
+      "key": "market",
+      "qc": {
+        "status": "yellow",
+        "openIssues": 2,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Mike Johnson",
+        "lastReviewedAt": "2024-03-08T11:15:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-market",
+          "label": "v1 • 2024-03-07 09:30",
+          "author": "Mike Johnson",
+          "createdAt": "2024-03-07T09:30:00Z",
+          "data": {
+            "daysOnMarket": "52",
+            "absorption": "7.1",
+            "priceChange": "+2.8%"
+          }
+        },
+        {
+          "id": "v2-market",
+          "label": "v2 • 2024-03-08 11:15",
+          "author": "Mike Johnson",
+          "createdAt": "2024-03-08T11:15:00Z",
+          "data": {
+            "daysOnMarket": "45",
+            "absorption": "6.2",
+            "priceChange": "+3.2%"
+          }
+        }
+      ],
+      "currentData": {
+        "daysOnMarket": "45",
+        "absorption": "6.2",
+        "priceChange": "+3.2%"
+      }
+    },
+    "comps": {
+      "key": "comps",
+      "qc": {
+        "status": "red",
+        "openIssues": 1,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Sarah Chen",
+        "lastReviewedAt": "2024-03-09T13:45:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-comps",
+          "label": "v1 • 2024-03-08 16:20",
+          "author": "Sarah Chen",
+          "createdAt": "2024-03-08T16:20:00Z",
+          "data": {
+            "comp1": {
+              "address": "1240 Oak Street",
+              "price": "$465,000",
+              "date": "Feb 15, 2024",
+              "sqft": "2,380",
+              "pricePerSqft": "$195"
+            },
+            "comp2": {
+              "address": "1156 Maple Avenue",
+              "price": "$490,000",
+              "date": "Jan 28, 2024",
+              "sqft": "2,520",
+              "pricePerSqft": "$194"
+            }
+          }
+        }
+      ],
+      "currentData": {
+        "comp1": {
+          "address": "1240 Oak Street",
+          "price": "$472,000",
+          "date": "Feb 15, 2024",
+          "sqft": "2,380",
+          "pricePerSqft": "$198"
+        },
+        "comp2": {
+          "address": "1156 Maple Avenue",
+          "price": "$495,000",
+          "date": "Jan 28, 2024",
+          "sqft": "2,520",
+          "pricePerSqft": "$196"
+        }
+      }
+    },
+    "sketch": {
+      "key": "sketch",
+      "qc": {
+        "status": "green",
+        "openIssues": 0,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "John Smith",
+        "lastReviewedAt": "2024-03-09T10:30:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-sketch",
+          "label": "v1 • 2024-03-09 10:30",
+          "author": "John Smith",
+          "createdAt": "2024-03-09T10:30:00Z",
+          "data": {
+            "sketchComplete": true,
+            "totalArea": "2,450 sq ft"
+          }
+        }
+      ],
+      "currentData": {
+        "sketchComplete": true,
+        "totalArea": "2,450 sq ft"
+      }
+    },
+    "photos": {
+      "key": "photos",
+      "qc": {
+        "status": "yellow",
+        "openIssues": 1,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Mike Johnson",
+        "lastReviewedAt": "2024-03-09T14:15:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-photos",
+          "label": "v1 • 2024-03-09 14:15",
+          "author": "Mike Johnson",
+          "createdAt": "2024-03-09T14:15:00Z",
+          "data": {
+            "exteriorPhotos": 8,
+            "interiorPhotos": 12,
+            "missingPhotos": ["Bathroom 2", "Basement"]
+          }
+        }
+      ],
+      "currentData": {
+        "exteriorPhotos": 8,
+        "interiorPhotos": 12,
+        "missingPhotos": ["Bathroom 2"]
+      }
+    },
+    "cost": {
+      "key": "cost",
+      "qc": {
+        "status": "green",
+        "openIssues": 0,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Sarah Chen",
+        "lastReviewedAt": "2024-03-10T09:45:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-cost",
+          "label": "v1 • 2024-03-10 09:45",
+          "author": "Sarah Chen",
+          "createdAt": "2024-03-10T09:45:00Z",
+          "data": {
+            "replacementCost": "$425,000",
+            "depreciation": "$85,000"
+          }
+        }
+      ],
+      "currentData": {
+        "replacementCost": "$425,000",
+        "depreciation": "$85,000"
+      }
+    },
+    "reconciliation": {
+      "key": "reconciliation",
+      "qc": {
+        "status": "green",
+        "openIssues": 0,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "John Smith",
+        "lastReviewedAt": "2024-03-10T15:20:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-reconciliation",
+          "label": "v1 • 2024-03-10 15:20",
+          "author": "John Smith",
+          "createdAt": "2024-03-10T15:20:00Z",
+          "data": {
+            "finalValue": "$485,000"
+          }
+        }
+      ],
+      "currentData": {
+        "finalValue": "$485,000"
+      }
+    },
+    "qcSignoff": {
+      "key": "qcSignoff",
+      "qc": {
+        "status": "yellow",
+        "openIssues": 1,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Sarah Chen",
+        "lastReviewedAt": "2024-03-10T16:30:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-qc",
+          "label": "v1 • 2024-03-10 16:30",
+          "author": "Sarah Chen",
+          "createdAt": "2024-03-10T16:30:00Z",
+          "data": {
+            "sectionsCompleted": true,
+            "compsVerified": true,
+            "supervisorReview": false
+          }
+        }
+      ],
+      "currentData": {
+        "sectionsCompleted": true,
+        "compsVerified": true,
+        "supervisorReview": false
+      }
+    },
+    "exports": {
+      "key": "exports",
+      "qc": {
+        "status": "green",
+        "openIssues": 0,
+        "overriddenIssues": 0,
+        "lastReviewedBy": "John Smith",
+        "lastReviewedAt": "2024-03-10T17:00:00Z"
+      },
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-exports",
+          "label": "v1 • 2024-03-10 17:00",
+          "author": "John Smith",
+          "createdAt": "2024-03-10T17:00:00Z",
+          "data": {
+            "pdfReady": true,
+            "excelReady": true
+          }
+        }
+      ],
+      "currentData": {
+        "pdfReady": true,
+        "excelReady": true
+      }
+    }
+  }
+}
