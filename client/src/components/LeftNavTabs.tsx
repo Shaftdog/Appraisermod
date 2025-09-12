@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'wouter';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, User, LogOut } from 'lucide-react';
 import { StatusChip } from './StatusChip';
 import { Order, TabKey, TAB_LABELS } from '@/types';
 import { aggregateStatus } from '@/lib/aggregateStatus';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
+import { UserProfile } from '@/components/UserProfile';
 
 interface LeftNavTabsProps {
   order: Order;
@@ -15,6 +17,7 @@ export function LeftNavTabs({ order }: LeftNavTabsProps) {
   const [location] = useLocation();
   const isMobile = useIsMobile();
   const [isOpen, setIsOpen] = useState(false);
+  const { user, logout } = useAuth();
 
   const currentTab = location.split('/').pop() || 'order-summary';
   const orderId = order.id;
@@ -61,7 +64,7 @@ export function LeftNavTabs({ order }: LeftNavTabsProps) {
             <h1 className="text-lg font-semibold" data-testid="text-order-number">
               Order #{order.orderNumber}
             </h1>
-            <div className="w-10" />
+            <UserProfile />
           </div>
         </header>
 
@@ -150,6 +153,13 @@ function SidebarContent({
           </button>
         )}
       </div>
+      
+      {/* User Profile - Only show on desktop sidebar */}
+      {!showCloseButton && (
+        <div className="mb-6">
+          <UserProfile />
+        </div>
+      )}
       
       {/* Order Info */}
       <div className="mb-6 p-4 bg-muted rounded-lg">

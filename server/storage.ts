@@ -3,6 +3,7 @@ import { users, orders, versions } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
 
@@ -10,6 +11,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  authenticateUser(username: string, password: string): Promise<User | null>;
   
   getOrder(id: string): Promise<OrderData | undefined>;
   createOrder(order: InsertOrder): Promise<OrderData>;
@@ -79,24 +81,77 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      fullName: users.fullName,
+      role: users.role,
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt
+    }).from(users).where(eq(users.id, id));
     return user || undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      fullName: users.fullName,
+      role: users.role,
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt
+    }).from(users).where(eq(users.username, username));
     return user || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
+    // Hash the password before storing
+    const hashedPassword = await bcrypt.hash(insertUser.password, 12);
+    
     const [user] = await db
       .insert(users)
       .values({
         ...insertUser,
+        password: hashedPassword,
         role: (insertUser.role || 'appraiser') as 'appraiser' | 'reviewer' | 'admin',
       })
-      .returning();
+      .returning({
+        id: users.id,
+        username: users.username,
+        email: users.email,
+        fullName: users.fullName,
+        role: users.role,
+        createdAt: users.createdAt,
+        updatedAt: users.updatedAt
+      });
     return user;
+  }
+
+  async authenticateUser(username: string, password: string): Promise<User | null> {
+    // Get user with password for verification
+    const [userWithPassword] = await db.select().from(users).where(eq(users.username, username));
+    if (!userWithPassword) {
+      return null;
+    }
+
+    // Verify password
+    const passwordMatch = await bcrypt.compare(password, userWithPassword.password);
+    if (!passwordMatch) {
+      return null;
+    }
+
+    // Return user without password
+    return {
+      id: userWithPassword.id,
+      username: userWithPassword.username,
+      email: userWithPassword.email,
+      fullName: userWithPassword.fullName,
+      role: userWithPassword.role,
+      createdAt: userWithPassword.createdAt,
+      updatedAt: userWithPassword.updatedAt
+    };
   }
 
   async getOrder(id: string): Promise<OrderData | undefined> {
