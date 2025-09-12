@@ -1,0 +1,369 @@
+PROJECT TITLE:
+Build “Order UI Shell” (Next.js + TypeScript) with Tabs, RYG Status Chips, Sign‑Off Buttons, and Version Diff Viewer
+
+GOAL:
+Create a frontend‑only working module that I can later wire to my backend. It should run locally, have mock data + mock API routes, be responsive (desktop + mobile), and include a clean, modern UI.
+
+Tech Requirements
+
+Framework: Next.js 14+ with App Router and TypeScript
+
+Styling: Tailwind CSS (configure from scratch)
+
+State: Local state + simple mock API routes; keep code ready to swap in real APIs later
+
+Maps/Icons: No map needed yet; basic icon set (Heroicons) OK
+
+Licenses: Use MIT‑friendly libs only
+
+Quality: Accessible, responsive, keyboard navigable
+
+Features to Implement (this sprint)
+1) Order Shell + Left Tabs
+
+Create an Order page layout with a persistent left‑hand tab nav (collapsible drawer on mobile):
+
+Tabs (for now):
+
+Order Summary
+
+Subject
+
+Market
+
+Comps
+
+Sketch
+
+Photos
+
+Cost
+
+Reconciliation
+
+QC & Sign‑off
+
+Exports
+
+Behavior:
+
+Clicking a tab switches the content pane (client‑side routes or in‑page state is fine).
+
+On mobile, left nav becomes a top “Menu” button that opens a drawer with the same tabs.
+
+Each tab header shows a status chip (Red/Yellow/Green) representing that tab’s QC state (see next section).
+
+2) Status Chips (RYG)
+
+Reusable <StatusChip status="green|yellow|red" countOverrides? countOpen? /> component.
+
+Visual:
+
+Small rounded pill with colored dot + label (e.g., “Green”, “2 Warnings”, “1 Critical”).
+
+Tooltip on hover/focus shows:
+
+“Open Issues: X”
+
+“Overridden Issues: Y”
+
+“Last Reviewed: timestamp/by whom” (mocked for now)
+
+Logic (mocked):
+
+Green: no open issues
+
+Yellow: has open warnings but no criticals
+
+Red: has ≥1 critical issue OR unresolved required fields
+
+Chips appear:
+
+Next to each left‑nav tab
+
+In the page header as an Overall Status chip that aggregates all tabs (Red trumps Yellow; Yellow trumps Green)
+
+3) Sign‑Off Buttons
+
+On each tab, a Sign‑Off control with states:
+
+Unsigned → button “Sign this section”
+
+Signed by Appraiser (shows signer name, time)
+
+Signed by Reviewer (if reviewer role is used later; mocked now)
+
+Behavior:
+
+Clicking “Sign this section” opens a confirm dialog with:
+
+Summary of open issues (from that tab)
+
+If red issues exist, require a “Reason for proceeding” text field; save it as an override note.
+
+After sign‑off, show immutable metadata row: “Signed by Name on DateTime” and a small “View overrides” link if any.
+
+4) Version Diff Viewer
+
+A panel accessible from any tab via a “Versions” button:
+
+UI:
+
+Two dropdowns: “Compare From version” and “Compare To version”
+
+Toggle: Field View / Raw JSON Diff
+
+Diff output with:
+
+Adds (green), Removes (red), Changes (yellow highlight per field)
+
+For string fields, show inline character diff; for numbers/dates, show old → new
+
+“Copy diff to clipboard” button
+
+“Restore this version” button (disabled for now; just a placeholder)
+
+Implementation detail:
+
+Use a small diff lib (MIT) such as:
+
+jsondiffpatch for object diffs
+
+diff (npm diff) for text diffs
+
+react-diff-viewer-continued is OK if license fits
+
+Provide a clean abstraction so I can replace with server‑side diffs later.
+
+Data Model (Mocked for Now)
+
+Create types/ with these minimal models:
+
+export type RiskStatus = 'green' | 'yellow' | 'red';
+
+export type TabKey =
+  | 'orderSummary'
+  | 'subject'
+  | 'market'
+  | 'comps'
+  | 'sketch'
+  | 'photos'
+  | 'cost'
+  | 'reconciliation'
+  | 'qcSignoff'
+  | 'exports';
+
+export interface TabQC {
+  status: RiskStatus;
+  openIssues: number;
+  overriddenIssues: number;
+  lastReviewedBy?: string;
+  lastReviewedAt?: string; // ISO
+}
+
+export interface Signoff {
+  state: 'unsigned' | 'signed-appraiser' | 'signed-reviewer';
+  signedBy?: string;
+  signedAt?: string; // ISO
+  overrideReason?: string; // required if signing with red status
+}
+
+export interface VersionSnapshot {
+  id: string;             // e.g., ISO timestamp or UUID
+  label: string;          // "v1 • 2025-09-12 10:33"
+  author: string;
+  createdAt: string;      // ISO
+  data: Record<string, any>; // arbitrary payload for the current tab
+}
+
+export interface TabState {
+  key: TabKey;
+  qc: TabQC;
+  signoff: Signoff;
+  versions: VersionSnapshot[];
+  currentData: Record<string, any>;
+}
+
+export interface Order {
+  id: string;
+  orderNumber: string;
+  clientName: string;
+  dueDate?: string;
+  overallStatus: RiskStatus;
+  tabs: Record<TabKey, TabState>;
+}
+
+
+Seed one sample order in data/order-sample.json with:
+
+Mixed statuses across tabs (some green, one yellow with open issues, one red with a critical)
+
+Each tab having 3+ version snapshots with small differences so the diff viewer has content
+
+A couple of tabs already “Signed by Appraiser” with timestamps
+
+Overall status computed = Red if any tab is red
+
+Mock API Routes (Next.js Route Handlers)
+
+Under app/api/ add handlers that read/write a simple in‑memory store on the server (you can initialize from the JSON seed and re‑serialize to a file to simulate persistence):
+
+GET /api/orders/:id → returns Order
+
+POST /api/orders/:id/tabs/:tab/signoff → body {action: 'sign-appraiser', overrideReason?: string}; updates tab signoff, validates red case
+
+GET /api/orders/:id/tabs/:tab/versions → list snapshots
+
+GET /api/orders/:id/tabs/:tab/versions/:versionId → returns snapshot data
+
+(Optional) POST /api/orders/:id/tabs/:tab/review → update TabQC (for simulating QC changes)
+
+Keep all validation server‑side so the UI can rely on it later when real APIs exist.
+
+UI/UX Details
+
+Layout
+
+Header: Order #, Client, Due Date, Overall RYG chip
+
+Left nav (sticky): tab list with chip per tab
+
+Content area: tab title, small subtitle, Sign‑off panel (top‑right), Versions button (top‑right)
+
+Use Tailwind to keep it clean; ensure dark mode friendly variables if easy
+
+Accessibility
+
+Tabs and buttons keyboard navigable (role="tablist", role="tab", aria-selected, etc.)
+
+Tooltips accessible (focus + hover)
+
+Color contrast meets WCAG AA; do not rely on color alone—include labels/icons
+
+Responsive
+
+<= 768px: left nav collapses to a top “Tabs” button opening a drawer
+
+Content uses a single column; chips wrap gracefully
+
+Components to Build
+
+components/LeftNavTabs.tsx
+
+components/StatusChip.tsx
+
+components/SignoffPanel.tsx
+
+components/VersionDiffViewer.tsx
+
+components/ConfirmDialog.tsx
+
+components/Toolbar.tsx (Right‑side toolbar area with Versions & actions)
+
+lib/aggregateStatus.ts (Compute overall from tabs)
+
+lib/diff.ts (Wrapper around chosen diff libraries)
+
+Pages / Routes
+
+app/orders/[orderId]/layout.tsx → Shell with left nav
+
+app/orders/[orderId]/page.tsx → Defaults to Order Summary tab
+
+Child routes or client components for each tab (can be simple placeholders with mock fields for now):
+
+app/orders/[orderId]/(tabs)/order-summary/page.tsx
+
+.../subject/page.tsx
+
+.../market/page.tsx
+
+.../comps/page.tsx
+
+.../sketch/page.tsx
+
+.../photos/page.tsx
+
+.../cost/page.tsx
+
+.../reconciliation/page.tsx
+
+.../qc-signoff/page.tsx
+
+.../exports/page.tsx
+
+Each tab page should:
+
+Render the tab’s StatusChip
+
+Show a few example fields (mocked)
+
+Include the SignoffPanel and open the VersionDiffViewer modal
+
+Business Rules (mocked, enforce in API)
+
+Overall status: Red if any tab is Red; else Yellow if any tab is Yellow; else Green
+
+Sign‑off with Red requires overrideReason (store it and expose a “View overrides” link)
+
+Signing a tab updates lastReviewedBy/At and flips openIssues to 0 only if the tab is Green; otherwise issues remain (we’re only recording the sign‑off)
+
+Version Diff Viewer:
+
+Default compare “previous” → “current”
+
+Support selecting any two versions
+
+Field View iterates top‑level fields in currentData and shows status (unchanged/changed/added/removed)
+
+Raw JSON Diff shows a pretty diff
+
+Commands & Setup
+
+Initialize: npx create-next-app@latest --ts
+
+Add Tailwind: npm install -D tailwindcss postcss autoprefixer && npx tailwindcss init -p (configure content paths)
+
+Install libs:
+
+npm i classnames heroicons react-aria (or similar)
+
+npm i jsondiffpatch diff react-diff-viewer-continued
+
+Dev: npm run dev
+
+Create a README.md describing:
+
+What this module does
+
+How to run it
+
+Where to swap in real APIs later
+
+Data model overview
+
+Acceptance Criteria (demo checklist)
+
+ Order layout renders with left tabs + overall RYG chip
+
+ Each tab shows its own RYG chip with tooltip counts & timestamps
+
+ Mobile drawer works; keyboard accessible
+
+ Sign‑off flow works: confirm dialog, red case enforces override reason, metadata persists
+
+ Version Diff Viewer shows dropdowns, Field View, Raw JSON Diff, and “Copy diff”
+
+ Overall status reflects tab statuses correctly
+
+ All data comes from mock API; refreshing the page keeps state (simulate persistence by writing to a JSON file or in‑memory store that survives HMR if possible)
+
+Nice‑to‑Haves (only if time)
+
+Persist “last active tab” in URL or localStorage
+
+Global toast notifications on sign‑off success/failure
+
+Unit tests for aggregateStatus and diff helpers (Vitest)
+
+Deliver exactly this slice—no backend business logic beyond mocks. Keep the code clean, typed, and production‑ready so I can plug real endpoints later.
