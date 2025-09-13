@@ -10,6 +10,10 @@ The application serves as a complete workflow management tool for appraisal prof
 
 Preferred communication style: Simple, everyday language.
 
+## Integration Notes
+
+- **GitHub Integration**: Manual push preferred - user will handle GitHub repository sync to https://github.com/Shaftdog/Appraisermod manually rather than using Replit's GitHub connector.
+
 ## System Architecture
 
 ### Frontend Architecture
