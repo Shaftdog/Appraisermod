@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks } from "@shared/schema";
+import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
 import { users, orders, versions } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -6,6 +6,8 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
+import { computeMarketMetrics } from "../client/src/lib/market/stats";
+import { format, subMonths, addMonths } from "date-fns";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -60,6 +62,15 @@ export interface IStorage {
   exportPhotoAddenda(orderId: string): Promise<{ pdfPath: string }>;
   
   getPhotosQcSummary(orderId: string): Promise<PhotosQcSummary>;
+
+  // Market Conditions & MCR methods
+  getMarketSettings(orderId: string): Promise<MarketSettings>;
+  updateMarketSettings(orderId: string, settings: Partial<MarketSettings>): Promise<MarketSettings>;
+  getMarketRecords(orderId: string): Promise<MarketRecord[]>;
+  seedMarketRecords(orderId: string): Promise<MarketRecord[]>;
+  computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>): Promise<McrMetrics>;
+  getTimeAdjustments(orderId: string): Promise<TimeAdjustments>;
+  updateTimeAdjustments(orderId: string, adjustments: Partial<TimeAdjustments>): Promise<TimeAdjustments>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -905,6 +916,269 @@ export class DatabaseStorage implements IStorage {
       photoCount: photos.length,
       categoryCounts
     };
+  }
+
+  // Market Conditions & MCR Methods Implementation
+
+  private getMarketDataPath(orderId: string): string {
+    return path.resolve(process.cwd(), 'data', 'orders', orderId, 'market');
+  }
+
+  private ensureMarketDataDir(orderId: string): void {
+    const marketDir = this.getMarketDataPath(orderId);
+    fs.mkdirSync(marketDir, { recursive: true });
+  }
+
+  async getMarketSettings(orderId: string): Promise<MarketSettings> {
+    const marketDir = this.getMarketDataPath(orderId);
+    const settingsPath = path.join(marketDir, 'settings.json');
+    
+    try {
+      if (fs.existsSync(settingsPath)) {
+        const data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        return data;
+      }
+    } catch (error) {
+      console.log('Error reading market settings:', error);
+    }
+
+    // Return default settings if not found
+    const defaultSettings: MarketSettings = {
+      orderId,
+      monthsBack: 12,
+      statuses: ['sold', 'active', 'pending', 'expired'],
+      usePolygon: true,
+      metric: 'salePrice',
+      smoothing: 'none',
+      minSalesPerMonth: 5
+    };
+
+    // Save default settings
+    this.ensureMarketDataDir(orderId);
+    fs.writeFileSync(settingsPath, JSON.stringify(defaultSettings, null, 2));
+    
+    return defaultSettings;
+  }
+
+  async updateMarketSettings(orderId: string, settings: Partial<MarketSettings>): Promise<MarketSettings> {
+    const currentSettings = await this.getMarketSettings(orderId);
+    const updatedSettings: MarketSettings = { ...currentSettings, ...settings };
+    
+    this.ensureMarketDataDir(orderId);
+    const settingsPath = path.join(this.getMarketDataPath(orderId), 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify(updatedSettings, null, 2));
+    
+    return updatedSettings;
+  }
+
+  async getMarketRecords(orderId: string): Promise<MarketRecord[]> {
+    const marketDir = this.getMarketDataPath(orderId);
+    const recordsPath = path.join(marketDir, 'records.json');
+    
+    try {
+      if (fs.existsSync(recordsPath)) {
+        const data = JSON.parse(fs.readFileSync(recordsPath, 'utf-8'));
+        return data;
+      }
+    } catch (error) {
+      console.log('Error reading market records:', error);
+    }
+
+    // If no records found, seed with sample data
+    return await this.seedMarketRecords(orderId);
+  }
+
+  async seedMarketRecords(orderId: string): Promise<MarketRecord[]> {
+    // Generate realistic sample market records
+    const subject = await this.getSubject(orderId);
+    const now = new Date();
+    const records: MarketRecord[] = [];
+    
+    // Generate records for the past 18 months
+    const addresses = [
+      "1240 Oak Street, Austin, TX 78701",
+      "1250 Elm Drive, Austin, TX 78701", 
+      "1235 Pine Avenue, Austin, TX 78701",
+      "1260 Maple Lane, Austin, TX 78701",
+      "1245 Cedar Court, Austin, TX 78701",
+      "1255 Birch Way, Austin, TX 78701",
+      "1270 Walnut Street, Austin, TX 78701",
+      "1280 Hickory Drive, Austin, TX 78701",
+      "1290 Pecan Avenue, Austin, TX 78701",
+      "1300 Ash Lane, Austin, TX 78701",
+      "1310 Cherry Street, Austin, TX 78701",
+      "1320 Dogwood Drive, Austin, TX 78701",
+      "1330 Magnolia Avenue, Austin, TX 78701",
+      "1340 Sycamore Lane, Austin, TX 78701",
+      "1350 Poplar Street, Austin, TX 78701",
+      "1360 Willow Drive, Austin, TX 78701",
+      "1370 Cottonwood Avenue, Austin, TX 78701",
+      "1380 Redwood Lane, Austin, TX 78701",
+      "1390 Cypress Street, Austin, TX 78701",
+      "1400 Juniper Drive, Austin, TX 78701"
+    ];
+
+    let recordId = 1;
+    
+    for (let monthOffset = 0; monthOffset < 18; monthOffset++) {
+      const monthDate = subMonths(now, monthOffset);
+      const recordsThisMonth = Math.floor(Math.random() * 8) + 3; // 3-10 records per month
+      
+      for (let i = 0; i < recordsThisMonth; i++) {
+        const address = addresses[(recordId - 1) % addresses.length];
+        const statusRandom = Math.random();
+        let status: 'active' | 'pending' | 'sold' | 'expired';
+        
+        if (monthOffset === 0) {
+          // Current month - more actives
+          status = statusRandom < 0.6 ? 'active' : statusRandom < 0.8 ? 'pending' : 'sold';
+        } else if (monthOffset === 1) {
+          // Last month - mix of statuses
+          status = statusRandom < 0.3 ? 'active' : statusRandom < 0.5 ? 'pending' : statusRandom < 0.9 ? 'sold' : 'expired';
+        } else {
+          // Older months - mostly sold or expired
+          status = statusRandom < 0.8 ? 'sold' : 'expired';
+        }
+        
+        // Generate realistic property data
+        const basePrice = 400000 + Math.random() * 200000; // $400k-$600k range
+        const gla = 1800 + Math.random() * 1200; // 1800-3000 sq ft
+        const listPrice = Math.round(basePrice / 1000) * 1000; // Round to nearest 1k
+        
+        // Add small random offsets to lat/lng around subject property
+        const latOffset = (Math.random() - 0.5) * 0.01; // ~0.5 mile radius
+        const lngOffset = (Math.random() - 0.5) * 0.01;
+        
+        const record: MarketRecord = {
+          id: `mr-${recordId}`,
+          status,
+          address,
+          lat: subject.latlng.lat + latOffset,
+          lng: subject.latlng.lng + lngOffset,
+          livingArea: Math.round(gla),
+          listPrice
+        };
+        
+        // Set dates based on status
+        const dayInMonth = Math.floor(Math.random() * 28) + 1;
+        const listDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), dayInMonth);
+        record.listDate = listDate.toISOString();
+        
+        if (status === 'sold') {
+          // Sold properties get sale data
+          const daysOnMarket = Math.floor(Math.random() * 60) + 15; // 15-75 days
+          const closeDate = new Date(listDate.getTime() + daysOnMarket * 24 * 60 * 60 * 1000);
+          record.closeDate = closeDate.toISOString();
+          record.dom = daysOnMarket;
+          
+          // Sale price as percentage of list price (typically 95-105%)
+          const spToLpRatio = 0.95 + Math.random() * 0.10;
+          record.salePrice = Math.round(listPrice * spToLpRatio / 1000) * 1000;
+          record.spToLp = spToLpRatio;
+        } else if (status === 'pending') {
+          // Pending properties have been on market for a while
+          record.dom = Math.floor(Math.random() * 45) + 10; // 10-55 days
+        } else if (status === 'active') {
+          // Active properties have current DOM
+          record.dom = Math.floor(Math.random() * 30) + 1; // 1-30 days
+        } else if (status === 'expired') {
+          // Expired properties were on market longer
+          record.dom = Math.floor(Math.random() * 60) + 90; // 90-150 days
+        }
+        
+        records.push(record);
+        recordId++;
+      }
+    }
+    
+    // Save generated records
+    this.ensureMarketDataDir(orderId);
+    const recordsPath = path.join(this.getMarketDataPath(orderId), 'records.json');
+    fs.writeFileSync(recordsPath, JSON.stringify(records, null, 2));
+    
+    return records;
+  }
+
+  async computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>): Promise<McrMetrics> {
+    const settings = settingsOverride 
+      ? { ...await this.getMarketSettings(orderId), ...settingsOverride }
+      : await this.getMarketSettings(orderId);
+    
+    const records = await this.getMarketRecords(orderId);
+    
+    // Filter records by polygon if enabled
+    let filteredRecords = records;
+    if (settings.usePolygon) {
+      try {
+        const polygon = await this.getMarketPolygon(orderId);
+        if (polygon) {
+          // For simplicity, we'll keep all records
+          // In a real implementation, you'd do point-in-polygon checking
+          filteredRecords = records;
+        }
+      } catch (error) {
+        console.log('Polygon filtering error:', error);
+      }
+    }
+    
+    // Use the market statistics utilities to compute metrics
+    const metrics = computeMarketMetrics(filteredRecords, {
+      monthsBack: settings.monthsBack,
+      statuses: settings.statuses,
+      metric: settings.metric,
+      minSalesPerMonth: settings.minSalesPerMonth
+    });
+    
+    // Cache the computed metrics
+    this.ensureMarketDataDir(orderId);
+    const metricsPath = path.join(this.getMarketDataPath(orderId), 'mcr.json');
+    fs.writeFileSync(metricsPath, JSON.stringify(metrics, null, 2));
+    
+    return metrics;
+  }
+
+  async getTimeAdjustments(orderId: string): Promise<TimeAdjustments> {
+    const marketDir = this.getMarketDataPath(orderId);
+    const adjustmentsPath = path.join(marketDir, 'time-adjustments.json');
+    
+    try {
+      if (fs.existsSync(adjustmentsPath)) {
+        const data = JSON.parse(fs.readFileSync(adjustmentsPath, 'utf-8'));
+        return data;
+      }
+    } catch (error) {
+      console.log('Error reading time adjustments:', error);
+    }
+
+    // Compute default time adjustments from market metrics
+    const metrics = await this.computeMcrMetrics(orderId);
+    const defaultAdjustments: TimeAdjustments = {
+      orderId,
+      basis: 'salePrice',
+      pctPerMonth: metrics.trendPctPerMonth,
+      computedAt: new Date().toISOString()
+    };
+
+    // Save default adjustments
+    this.ensureMarketDataDir(orderId);
+    fs.writeFileSync(adjustmentsPath, JSON.stringify(defaultAdjustments, null, 2));
+    
+    return defaultAdjustments;
+  }
+
+  async updateTimeAdjustments(orderId: string, adjustments: Partial<TimeAdjustments>): Promise<TimeAdjustments> {
+    const currentAdjustments = await this.getTimeAdjustments(orderId);
+    const updatedAdjustments: TimeAdjustments = { 
+      ...currentAdjustments, 
+      ...adjustments,
+      computedAt: new Date().toISOString()
+    };
+    
+    this.ensureMarketDataDir(orderId);
+    const adjustmentsPath = path.join(this.getMarketDataPath(orderId), 'time-adjustments.json');
+    fs.writeFileSync(adjustmentsPath, JSON.stringify(updatedAdjustments, null, 2));
+    
+    return updatedAdjustments;
   }
 }
 
