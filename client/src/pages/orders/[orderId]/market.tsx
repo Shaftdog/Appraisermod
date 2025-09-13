@@ -8,18 +8,49 @@ import { Toolbar } from '@/components/Toolbar';
 import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock } from 'lucide-react';
+import { MarketSettings, MarketRecord, McrMetrics, TimeAdjustments } from '@shared/schema';
+import { computeMonthlyMedians, computeMarketMetrics } from '@/lib/market/stats';
 
 export default function Market() {
   const params = useParams<{ orderId: string }>();
   const orderId = params?.orderId;
   const [showVersions, setShowVersions] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'mcr' | 'records' | 'adjustments'>('overview');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: order } = useQuery<Order>({
+  const { data: order, isLoading: orderLoading, isError: orderError, error: orderErrorDetails } = useQuery<Order>({
     queryKey: ['/api/orders', orderId],
     enabled: !!orderId
   });
+
+  // Market data queries
+  const { data: marketSettings, isLoading: settingsLoading, isError: settingsError, error: settingsErrorDetails } = useQuery<MarketSettings>({
+    queryKey: ['/api/orders', orderId, 'market', 'settings'],
+    enabled: !!orderId
+  });
+
+  const { data: marketRecords, isLoading: recordsLoading, isError: recordsError, error: recordsErrorDetails } = useQuery<MarketRecord[]>({
+    queryKey: ['/api/orders', orderId, 'market', 'records'],
+    enabled: !!orderId
+  });
+
+  const { data: timeAdjustments, isLoading: adjustmentsLoading, isError: adjustmentsError, error: adjustmentsErrorDetails } = useQuery<TimeAdjustments>({
+    queryKey: ['/api/orders', orderId, 'market', 'time-adjustments'],
+    enabled: !!orderId
+  });
+
+  // MCR computation state
+  const [mcrMetrics, setMcrMetrics] = useState<McrMetrics | null>(null);
 
   const signoffMutation = useMutation({
     mutationFn: async (overrideReason?: string) => {
@@ -45,10 +76,135 @@ export default function Market() {
     }
   });
 
-  if (!order) return null;
+  // Seed market records mutation
+  const seedRecordsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', `/api/orders/${orderId}/market/records/seed`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/orders', orderId, 'market', 'records'] });
+      toast({
+        title: "Market records seeded",
+        description: "Sample market data has been generated.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Seeding failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Compute MCR mutation
+  const computeMcrMutation = useMutation({
+    mutationFn: async (settings?: Partial<MarketSettings>) => {
+      const response = await apiRequest('POST', `/api/orders/${orderId}/market/mcr/compute`, { settings });
+      return response.json();
+    },
+    onSuccess: (data: McrMetrics) => {
+      setMcrMetrics(data);
+      toast({
+        title: "MCR analysis complete",
+        description: "Market conditions have been analyzed.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "MCR analysis failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Handle missing orderId
+  if (!orderId) {
+    return (
+      <div className="p-6">
+        <Alert>
+          <AlertDescription>Order ID is required to view market data.</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  // Handle loading states - wait for all critical data to load
+  const isLoadingAny = orderLoading || settingsLoading || recordsLoading || adjustmentsLoading;
+  
+  if (isLoadingAny) {
+    return (
+      <div className="p-6">
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-4 w-96" />
+          </div>
+          <div className="grid lg:grid-cols-2 gap-6">
+            <Skeleton className="h-48" />
+            <Skeleton className="h-48" />
+          </div>
+          <Skeleton className="h-96" />
+        </div>
+      </div>
+    );
+  }
+
+  // Handle critical errors - show specific error messages
+  if (orderError) {
+    return (
+      <div className="p-6">
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load order: {orderErrorDetails?.message || 'Unknown error'}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  // Handle market data errors - show warnings but don't block the entire page
+  const hasMarketDataErrors = settingsError || recordsError || adjustmentsError;
+  const marketDataErrors = [
+    settingsError && { type: 'Settings', message: settingsErrorDetails?.message },
+    recordsError && { type: 'Records', message: recordsErrorDetails?.message },
+    adjustmentsError && { type: 'Time Adjustments', message: adjustmentsErrorDetails?.message }
+  ].filter(Boolean) as { type: string; message: string }[];
+
+  if (!order) {
+    return (
+      <div className="p-6">
+        <Alert>
+          <AlertDescription>Order not found.</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   const tab = order.tabs.market;
-  if (!tab) return null;
+  if (!tab) {
+    return (
+      <div className="p-6">
+        <Alert>
+          <AlertDescription>Market tab not found for this order.</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  // Compute chart data from market records
+  const chartData = marketRecords ? computeMonthlyMedians(marketRecords, 'salePrice', 12) : [];
+  const ppsfData = marketRecords ? computeMonthlyMedians(marketRecords, 'ppsf', 12) : [];
+
+  // Tab navigation items
+  const tabItems = [
+    { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'mcr', label: 'MCR Analysis', icon: TrendingUp },
+    { id: 'records', label: 'Market Records', icon: Settings },
+    { id: 'adjustments', label: 'Time Adjustments', icon: Clock }
+  ] as const;
 
   return (
     <div className="p-6">
@@ -65,6 +221,38 @@ export default function Market() {
           <Toolbar onVersionsClick={() => setShowVersions(true)} />
         </div>
       </div>
+
+      <div className="flex space-x-1 bg-muted p-1 rounded-lg mb-6">
+        {tabItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Button
+              key={item.id}
+              variant={activeTab === item.id ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab(item.id)}
+              className="flex items-center gap-2"
+              data-testid={`tab-${item.id}`}
+            >
+              <Icon className="h-4 w-4" />
+              {item.label}
+            </Button>
+          );
+        })}
+      </div>
+
+      {/* Market Data Error Alerts */}
+      {hasMarketDataErrors && (
+        <div className="mb-6 space-y-3">
+          {marketDataErrors.map((error, index) => (
+            <Alert key={index} variant="destructive">
+              <AlertDescription>
+                Failed to load Market {error.type}: {error.message || 'Unknown error'}
+              </AlertDescription>
+            </Alert>
+          ))}
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-6 mb-8">
         <div className="bg-card border border-border rounded-lg p-6">
@@ -95,41 +283,253 @@ export default function Market() {
         />
       </div>
 
-      {/* Market Analysis Content */}
+      {/* Tab Content */}
       <div className="space-y-6">
-        <div className="bg-card border border-border rounded-lg p-6">
-          <h3 className="font-medium text-foreground mb-4">Market Conditions</h3>
-          <div className="grid lg:grid-cols-3 gap-4">
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-foreground mb-1" data-testid="metric-days-on-market">
-                {tab.currentData.daysOnMarket || '45'}
-              </div>
-              <div className="text-sm text-muted-foreground">Average Days on Market</div>
-            </div>
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-foreground mb-1" data-testid="metric-absorption">
-                {tab.currentData.absorption || '6.2'}
-              </div>
-              <div className="text-sm text-muted-foreground">Months of Inventory</div>
-            </div>
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-foreground mb-1" data-testid="metric-price-change">
-                {tab.currentData.priceChange || '+3.2%'}
-              </div>
-              <div className="text-sm text-muted-foreground">YoY Price Change</div>
-            </div>
-          </div>
-        </div>
+        {activeTab === 'overview' && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Market Overview</CardTitle>
+                <CardDescription>Current market conditions and trends</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid lg:grid-cols-3 gap-4">
+                  <div className="text-center p-4 bg-muted rounded-lg">
+                    <div className="text-2xl font-bold text-foreground mb-1" data-testid="metric-days-on-market">
+                      {mcrMetrics?.domMedian ? Math.round(mcrMetrics.domMedian) : tab.currentData.daysOnMarket || '45'}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Average Days on Market</div>
+                  </div>
+                  <div className="text-center p-4 bg-muted rounded-lg">
+                    <div className="text-2xl font-bold text-foreground mb-1" data-testid="metric-absorption">
+                      {mcrMetrics?.monthsOfInventory ? mcrMetrics.monthsOfInventory.toFixed(1) : tab.currentData.absorption || '6.2'}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Months of Inventory</div>
+                  </div>
+                  <div className="text-center p-4 bg-muted rounded-lg">
+                    <div className="text-2xl font-bold text-foreground mb-1" data-testid="metric-price-change">
+                      {mcrMetrics?.trendPctPerMonth ? 
+                        `${(mcrMetrics.trendPctPerMonth * 12 * 100).toFixed(1)}%` : 
+                        tab.currentData.priceChange || '+3.2%'}
+                    </div>
+                    <div className="text-sm text-muted-foreground">YoY Price Change</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* Warning Issues */}
-        {tab.qc.status === 'yellow' && tab.qc.openIssues > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <h4 className="font-medium text-yellow-800 mb-2">⚠️ Warnings ({tab.qc.openIssues})</h4>
-            <ul className="text-sm text-yellow-700 space-y-1">
-              <li>• Limited comparable sales in past 6 months</li>
-              <li>• Market volatility detected in neighborhood</li>
-            </ul>
+            {chartData.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Price Trends</CardTitle>
+                  <CardDescription>Median sale prices over the last 12 months</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ChartContainer
+                    config={{
+                      medianSalePrice: {
+                        label: "Median Sale Price",
+                        color: "hsl(var(--chart-1))",
+                      },
+                    }}
+                    className="h-[300px] w-full"
+                  >
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Line 
+                        type="monotone" 
+                        dataKey="medianSalePrice" 
+                        stroke="var(--color-medianSalePrice)" 
+                        strokeWidth={2}
+                      />
+                    </LineChart>
+                  </ChartContainer>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Warning Issues */}
+            {tab.qc.status === 'yellow' && tab.qc.openIssues > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">⚠️ Warnings ({tab.qc.openIssues})</h4>
+                <ul className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
+                  <li>• Limited comparable sales in past 6 months</li>
+                  <li>• Market volatility detected in neighborhood</li>
+                </ul>
+              </div>
+            )}
           </div>
+        )}
+
+        {activeTab === 'mcr' && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>MCR Analysis</CardTitle>
+                    <CardDescription>Market conditions rating and trend analysis</CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => seedRecordsMutation.mutate()}
+                      disabled={seedRecordsMutation.isPending}
+                      variant="outline"
+                      size="sm"
+                      data-testid="button-seed-records"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${seedRecordsMutation.isPending ? 'animate-spin' : ''}`} />
+                      Seed Data
+                    </Button>
+                    <Button
+                      onClick={() => computeMcrMutation.mutate(marketSettings)}
+                      disabled={computeMcrMutation.isPending || !marketRecords?.length}
+                      size="sm"
+                      data-testid="button-compute-mcr"
+                    >
+                      <BarChart3 className="h-4 w-4" />
+                      Compute MCR
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {mcrMetrics ? (
+                  <div className="space-y-4">
+                    <div className="grid lg:grid-cols-2 gap-4">
+                      <div className="space-y-3">
+                        <div className="flex justify-between">
+                          <span>Trend Method:</span>
+                          <Badge variant="secondary">{mcrMetrics.trendMethod}</Badge>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Monthly Trend:</span>
+                          <span className={mcrMetrics.trendPctPerMonth > 0 ? 'text-green-600' : 'text-red-600'}>
+                            {(mcrMetrics.trendPctPerMonth * 100).toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Months of Inventory:</span>
+                          <span>{mcrMetrics.monthsOfInventory.toFixed(1)}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <div className="flex justify-between">
+                          <span>DOM Median:</span>
+                          <span>{mcrMetrics.domMedian ? Math.round(mcrMetrics.domMedian) : 'N/A'} days</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>SP/LP Ratio:</span>
+                          <span>{mcrMetrics.spToLpMedian ? (mcrMetrics.spToLpMedian * 100).toFixed(1) + '%' : 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Records Analyzed:</span>
+                          <span>{marketRecords?.length || 0}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground mb-4">No MCR analysis available</p>
+                    <p className="text-sm text-muted-foreground">
+                      Seed market data and compute MCR to see analysis results
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'records' && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Market Records</CardTitle>
+                  <CardDescription>Historical sales data for analysis</CardDescription>
+                </div>
+                <Badge variant="outline" data-testid="badge-record-count">
+                  {marketRecords?.length || 0} records
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {marketRecords && marketRecords.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="grid lg:grid-cols-4 gap-4 text-sm">
+                    <div><strong>Status Distribution:</strong></div>
+                    <div>Sold: {marketRecords.filter(r => r.status === 'sold').length}</div>
+                    <div>Active: {marketRecords.filter(r => r.status === 'active').length}</div>
+                    <div>Pending: {marketRecords.filter(r => r.status === 'pending').length}</div>
+                  </div>
+                  <Separator />
+                  <div className="text-sm text-muted-foreground">
+                    Latest records from {marketRecords[0]?.listDate} to {marketRecords[marketRecords.length - 1]?.listDate}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground mb-4">No market records available</p>
+                  <Button 
+                    onClick={() => seedRecordsMutation.mutate()}
+                    disabled={seedRecordsMutation.isPending}
+                    data-testid="button-seed-initial"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${seedRecordsMutation.isPending ? 'animate-spin' : ''}`} />
+                    Generate Sample Data
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'adjustments' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Time Adjustments</CardTitle>
+              <CardDescription>Time-based market condition adjustments for comparable properties</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {timeAdjustments ? (
+                <div className="space-y-4">
+                  <div className="grid lg:grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                      <div className="flex justify-between">
+                        <span>Monthly Adjustment Rate:</span>
+                        <span className={timeAdjustments.monthlyRate > 0 ? 'text-green-600' : 'text-red-600'}>
+                          {(timeAdjustments.monthlyRate * 100).toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Method:</span>
+                        <Badge variant="secondary">{timeAdjustments.method}</Badge>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex justify-between">
+                        <span>Confidence Level:</span>
+                        <span>{(timeAdjustments.confidence * 100).toFixed(1)}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Data Points:</span>
+                        <span>{timeAdjustments.dataPoints}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">Time adjustments will be calculated from MCR analysis</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         )}
       </div>
 

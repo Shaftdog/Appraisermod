@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema } from "@shared/schema";
+import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema } from "@shared/schema";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
 import multer from "multer";
@@ -1060,7 +1060,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied to this order' });
       }
       
-      const settings = await storage.updateMarketSettings(orderId, req.body);
+      // Validate request body against schema
+      const validationResult = marketSettingsSchema.partial().safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid market settings data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const settings = await storage.updateMarketSettings(orderId, validationResult.data);
       res.json(settings);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
@@ -1111,7 +1120,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied to this order' });
       }
       
-      const metrics = await storage.computeMcrMetrics(orderId, req.body.settings);
+      // Validate settings if provided
+      let validatedSettings = undefined;
+      if (req.body.settings) {
+        const validationResult = marketSettingsSchema.partial().safeParse(req.body.settings);
+        if (!validationResult.success) {
+          return res.status(400).json({ 
+            message: "Invalid market settings for MCR computation", 
+            errors: validationResult.error.errors 
+          });
+        }
+        validatedSettings = validationResult.data;
+      }
+      
+      const metrics = await storage.computeMcrMetrics(orderId, validatedSettings);
       res.json(metrics);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
@@ -1145,7 +1167,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied to this order' });
       }
       
-      const timeAdjustments = await storage.updateTimeAdjustments(orderId, req.body);
+      // Validate request body against schema
+      const validationResult = timeAdjustmentsSchema.partial().safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid time adjustments data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const timeAdjustments = await storage.updateTimeAdjustments(orderId, validationResult.data);
       res.json(timeAdjustments);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });

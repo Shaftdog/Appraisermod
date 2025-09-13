@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
-import { computeMarketMetrics } from "../client/src/lib/market/stats";
+import { computeMarketMetrics } from "@shared/marketStats";
 import { format, subMonths, addMonths } from "date-fns";
 
 export interface IStorage {
