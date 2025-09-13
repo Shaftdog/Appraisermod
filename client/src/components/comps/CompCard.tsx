@@ -9,6 +9,7 @@ import { ScoreBar } from "./ScoreBar";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 import { CompProperty, ScoreBand, TimeAdjustments } from "@shared/schema";
 import { calculateTimeAdjustment } from "@shared/timeAdjust";
+import { type CompAdjustmentLine } from "@shared/adjustments";
 import { cn } from "@/lib/utils";
 
 interface CompCardProps {
@@ -18,6 +19,7 @@ interface CompCardProps {
   showPromote?: boolean;
   showSwap?: boolean;
   timeAdjustments?: TimeAdjustments;
+  attributeAdjustments?: CompAdjustmentLine;
   className?: string;
   onLock?: (compId: string, locked: boolean) => void;
   onPromote?: (compId: string) => void;
@@ -32,6 +34,7 @@ export function CompCard({
   showPromote = false,
   showSwap = false,
   timeAdjustments,
+  attributeAdjustments,
   className,
   onLock,
   onPromote,
@@ -175,7 +178,7 @@ export function CompCard({
                           </TooltipProvider>
                         )}
                         <Badge variant="outline" className="text-xs px-1 py-0 text-gray-500">
-                          Eff: {timeAdjustment.effectiveDate}
+                          Time: {timeAdjustment.effectiveDate}
                         </Badge>
                       </>
                     ) : timeAdjustment.error ? (
@@ -192,6 +195,24 @@ export function CompCard({
                         </Tooltip>
                       </TooltipProvider>
                     ) : null}
+                  </div>
+                )}
+                {/* Attribute Adjustments Display */}
+                {attributeAdjustments && attributeAdjustments.lines.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs flex-wrap mt-1">
+                    <span className="text-purple-600 dark:text-purple-400 font-medium" data-testid={`header-indicated-${comp.id}`}>
+                      {new Intl.NumberFormat("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                        maximumFractionDigits: 0,
+                      }).format(attributeAdjustments.indicatedValue)}
+                    </span>
+                    <Badge variant="outline" className="text-xs px-1 py-0" data-testid={`header-attr-subtotal-${comp.id}`}>
+                      Attr: {attributeAdjustments.subtotal >= 0 ? '+' : ''}{attributeAdjustments.subtotal.toLocaleString()}
+                    </Badge>
+                    <Badge variant="secondary" className="text-xs px-1 py-0">
+                      Final
+                    </Badge>
                   </div>
                 )}
               </div>
@@ -238,6 +259,45 @@ export function CompCard({
             <div className="font-medium">{comp.condition}/5</div>
           </div>
         </div>
+
+        {/* Attribute Adjustments Detail */}
+        {attributeAdjustments && attributeAdjustments.lines.length > 0 && (
+          <div className="bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-purple-900 dark:text-purple-100">Attribute Adjustments</span>
+              <Badge variant="outline" className="text-xs" data-testid={`total-adjustment-${comp.id}`}>
+                {attributeAdjustments.subtotal >= 0 ? '+' : ''}{attributeAdjustments.subtotal.toLocaleString()}
+              </Badge>
+            </div>
+            <div className="space-y-1">
+              {attributeAdjustments.lines.map((line, index) => (
+                <div key={`${line.key}-${index}`} className="flex items-center justify-between text-xs" data-testid={`adjustment-line-${comp.id}-${line.key}`}>
+                  <span className="text-gray-600 dark:text-gray-400">
+                    {line.rationale}
+                  </span>
+                  <span className={cn(
+                    "font-medium",
+                    line.delta >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                  )}>
+                    {line.delta >= 0 ? '+' : ''}{line.delta.toLocaleString()}{line.unit === '%' ? '%' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="pt-2 border-t border-purple-200 dark:border-purple-700">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-purple-900 dark:text-purple-100">Indicated Value:</span>
+                <span className="font-bold text-purple-700 dark:text-purple-300" data-testid={`indicated-value-${comp.id}`}>
+                  {new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency: "USD",
+                    maximumFractionDigits: 0,
+                  }).format(attributeAdjustments.indicatedValue)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Score Display */}
         {comp.score !== undefined && (
