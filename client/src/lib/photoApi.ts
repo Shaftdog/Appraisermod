@@ -224,6 +224,43 @@ export async function exportPhotoAddenda(orderId: string): Promise<{ pdfPath: st
   return response.json();
 }
 
+/**
+ * Upload generated addenda PDF blob
+ */
+export async function uploadAddendaPdf(orderId: string, blob: Blob): Promise<{ pdfPath: string }> {
+  // Try raw application/pdf first
+  try {
+    const response = await fetch(PhotoAPI.addendaExport(orderId), {
+      method: 'POST',
+      headers: { 
+        ...getDevAuthHeaders(), 
+        'Content-Type': 'application/pdf' 
+      },
+      credentials: 'include',
+      body: blob,
+    });
+    
+    if (response.ok) {
+      return handleResponse<{ pdfPath: string }>(response);
+    }
+  } catch (error) {
+    console.warn('Raw PDF upload failed, trying multipart:', error);
+  }
+  
+  // Fallback to multipart if server expects 'file'
+  const formData = new FormData();
+  formData.append('file', blob, `Order-${orderId}-Addenda.pdf`);
+  
+  const response = await fetch(PhotoAPI.addendaExport(orderId), { 
+    method: 'POST', 
+    headers: getDevAuthHeaders(),
+    credentials: 'include',
+    body: formData 
+  });
+  
+  return handleResponse<{ pdfPath: string }>(response);
+}
+
 // QC operations
 export async function getPhotosQcSummary(orderId: string): Promise<PhotosQcSummary> {
   const response = await apiRequest('GET', PhotoAPI.qcSummary(orderId));

@@ -1,0 +1,267 @@
+Perfect—let’s tackle Option 1 (PDF generation). Below is a copy‑paste prompt for Replit’s AI to implement pdf-lib export for your Addenda system, wired to the existing secured Photo API and the already‑built AddendaBuilder. It is frontend‑only and will not create new backend routes; it will produce the PDF in the browser and then upload it to the existing addendaExport endpoint.
+
+⸻
+
+PROMPT FOR REPLIT
+
+PROJECT TITLE
+FE: Addenda PDF Generation — Implement pdf-lib export for the Photos/Addenda module, integrate with existing AddendaBuilder and Photo API
+
+SCOPE RULES (IMPORTANT)
+	•	Do NOT create or modify backend routes.
+	•	Generate addenda PDF in the browser using pdf-lib, then upload the finished Blob to the existing export endpoint: POST /api/orders/:id/photos/addenda/export.
+	•	Centralize endpoint paths & upload mode in one config file so I can adjust without code changes.
+
+⸻
+
+0) Dependencies & Setup
+	•	Install:
+
+npm i pdf-lib classnames
+
+
+	•	Use standard fonts from pdf-lib (Helvetica, Times) by default to avoid asset packaging. Provide optional support for embedding a custom font file later.
+
+⸻
+
+1) Config (single source of truth)
+
+Create config/endpointPaths.ts (or extend if already exists):
+
+export const PhotoAPI = {
+  listPhotos: (orderId: string) => `/api/orders/${orderId}/photos`,
+  addendaGet: (orderId: string) => `/api/orders/${orderId}/photos/addenda`,
+  addendaPut: (orderId: string) => `/api/orders/${orderId}/photos/addenda`,
+  addendaExport: (orderId: string) => `/api/orders/${orderId}/photos/addenda/export`,
+};
+
+Create config/auth.ts (dev header passthrough):
+
+export const DEV_AUTH = {
+  headerName: process.env.NEXT_PUBLIC_AUTH_HEADER_NAME || 'x-user-id',
+  userId: process.env.NEXT_PUBLIC_DEV_USER_ID || 'demo-user',
+};
+export const authHeaders = { [DEV_AUTH.headerName]: DEV_AUTH.userId };
+
+Create config/pdf.ts:
+
+export type PageSizeName = 'LETTER' | 'A4';
+export interface PdfExportOptions {
+  pageSize: PageSizeName;      // default 'LETTER'
+  orientation: 'portrait' | 'landscape'; // default 'portrait'
+  marginPt: number;            // default 36 (0.5")
+  dpiTarget: 220;              // 150|220|300 (affects raster downscale)
+  drawHeader: boolean;         // default true
+  drawFooter: boolean;         // default true (page x of y)
+  watermark?: { text: string; opacity?: number; size?: number; angleDeg?: number } | null;
+  caption: { fontSize: number; maxLines: number }; // default { fontSize: 9, maxLines: 2 }
+}
+export const DEFAULT_PDF_OPTIONS: PdfExportOptions = {
+  pageSize: 'LETTER',
+  orientation: 'portrait',
+  marginPt: 36,
+  dpiTarget: 220,
+  drawHeader: true,
+  drawFooter: true,
+  watermark: null,
+  caption: { fontSize: 9, maxLines: 2 },
+};
+
+
+⸻
+
+2) Types (align with existing)
+
+If not already present, add/confirm types/photos.ts contains:
+
+export type AddendaLayout = '2up' | '4up' | '6up';
+export interface AddendaCell { photoId?: string; caption?: string; }
+export interface AddendaPage { id: string; layout: AddendaLayout; cells: AddendaCell[]; }
+export interface PhotoAddenda { orderId: string; pages: AddendaPage[]; updatedAt: string; }
+
+export interface PhotoMeta {
+  id: string;
+  orderId: string;
+  displayPath: string;
+  thumbPath: string;
+  originalPath: string;
+  processing?: { blurredPath?: string };
+  exif?: { takenAt?: string; gps?: { lat: number; lng: number } };
+  caption?: string;
+  category?: string;
+  width: number; height: number;
+  createdAt: string; updatedAt: string;
+}
+
+
+⸻
+
+3) PDF Engine (new module)
+
+Create lib/pdf/addendaPdf.ts with a single entry function:
+
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
+import { DEFAULT_PDF_OPTIONS, PdfExportOptions } from '@/config/pdf';
+import { PhotoAddenda, AddendaPage, PhotoMeta } from '@/types/photos';
+
+export interface GenerateAddendaInput {
+  orderId: string;
+  addenda: PhotoAddenda;
+  photosById: Record<string, PhotoMeta>; // map for quick lookup
+  options?: Partial<PdfExportOptions>;
+  // optional metadata:
+  meta?: { title?: string; author?: string; subject?: string; keywords?: string[] };
+}
+
+export async function generateAddendaPdf(
+  input: GenerateAddendaInput
+): Promise<{ blob: Blob; filename: string; pageCount: number; bytes: number }> {
+  // 1) Merge options & setup document
+  // 2) For each addenda page: compute grid for 2up/4up/6up
+  // 3) For each cell: choose image (blurredPath ?? displayPath), fetch with auth, embed, fit 'contain', draw caption
+  // 4) Draw header/footer + watermark
+  // 5) Set PDF metadata
+  // 6) Return Blob + stats
+}
+
+Implementation details (must do):
+	•	Page sizes:
+	•	LETTER portrait = 612 x 792 pt, landscape swapped.
+	•	A4 portrait = 595 x 842 pt. Provide a helper: getPageSize(options).
+	•	Grid per layout (inner content box = page minus margins):
+	•	2up: 1 col x 2 rows (or 2x1 if landscape).
+	•	4up: 2 cols x 2 rows.
+	•	6up: 2 cols x 3 rows.
+Create a helper returning cell rects (x, y, w, h) for each layout.
+	•	Captions: reserve ~captionHeight = options.caption.fontSize * options.caption.maxLines + 6 under each image area. The image rect = cell minus captionHeight. Implement multi‑line wrap/ellipsis:
+	•	Use font.widthOfTextAtSize(text, fontSize) to measure.
+	•	Break into lines ≤ maxWidth, up to maxLines; if overflow, append ….
+	•	Images:
+	•	Pick photo.processing?.blurredPath || photo.displayPath.
+	•	fetch(url, { headers: authHeaders }) → ArrayBuffer → embedJpg/embedPng (detect by magic bytes or file ext).
+	•	Scale “contain” into the image rect: scale factor = min(rectW/imgW, rectH/imgH), center with padding.
+	•	Optional downscale before embed for file size: if you want to rasterize to match dpiTarget, render to an offscreen canvas at ceil(rectW * (dpiTarget/72)) x ceil(rectH * (dpiTarget/72)). This is optional; implement later if file sizes are excessive.
+	•	Header/Footer (when enabled):
+	•	Header left: “Photo Addenda”; right: order id or client short string (pass via meta.subject if available).
+	•	Footer center: “Page X of Y”; footer left: date; footer right: your company name. Use light grey text.
+	•	Watermark (optional):
+	•	Draw options.watermark.text diagonally (default angleDeg = 45, opacity ~ 0.08, large size ~ pageWidth * 0.12), centered.
+	•	PDF Metadata: set title/author/subject/keywords if provided.
+	•	Return: Blob with application/pdf, suggested filename Order-<orderId>-Addenda.pdf.
+
+Add unit‑tested pure helpers in same file or lib/pdf/utils.ts:
+	•	wrapText(text, maxWidth, font, size, maxLines): string[]
+	•	getPageRect(options), getCells(layout, pageRect), drawCaption(...), drawWatermark(...)
+
+⸻
+
+4) API Client to Upload PDF
+
+Create/extend lib/photoApi.ts:
+
+import { PhotoAPI } from '@/config/endpointPaths';
+import { authHeaders } from '@/config/auth';
+
+export async function uploadAddendaPdf(orderId: string, blob: Blob): Promise<{ pdfPath: string }> {
+  // Try raw application/pdf first
+  const res = await fetch(PhotoAPI.addendaExport(orderId), {
+    method: 'POST',
+    headers: { ...authHeaders, 'Content-Type': 'application/pdf' },
+    body: blob,
+  });
+  if (res.ok) return res.json();
+
+  // Fallback to multipart if server expects 'file'
+  const fd = new FormData();
+  fd.append('file', blob, `Order-${orderId}-Addenda.pdf`);
+  const res2 = await fetch(PhotoAPI.addendaExport(orderId), { method: 'POST', headers: authHeaders as any, body: fd });
+  if (!res2.ok) throw new Error(await res2.text());
+  return res2.json();
+}
+
+Keep both paths since server behavior may vary. Don’t modify the backend.
+
+⸻
+
+5) Hook into AddendaExportBar
+
+Update components/photos/AddendaExportBar.tsx:
+	•	Inputs: orderId, currentAddenda, photosById, options (allow the user to set template, size, watermark, etc. using the already built export toolbar UI).
+	•	On Export:
+	1.	await generateAddendaPdf({ orderId, addenda, photosById, options, meta: { title, author, subject } })
+	2.	Show progress / bytes / page count
+	3.	await uploadAddendaPdf(orderId, blob) → receive { pdfPath }
+	4.	Show “Download PDF” link & success toast
+	5.	Persist last used options (per order) in local storage or the addenda JSON via addendaPut() if appropriate.
+
+Error handling:
+	•	If 401/403, display the auth banner hinting .env.local headers.
+
+⸻
+
+6) Photos Tab Integration (light)
+
+In app/orders/[orderId]/(tabs)/photos/page.tsx:
+	•	Ensure we already load:
+	•	addenda = GET addendaGet(orderId)
+	•	photos = GET listPhotos(orderId) → convert to Record<string, PhotoMeta>
+	•	Render AddendaBuilder + AddendaExportBar side‑by‑side (or via a toggle on mobile).
+	•	When export completes, persist the returned pdfPath in UI state (e.g., show “Last exported: ” with link).
+
+No backend additions required.
+
+⸻
+
+7) Acceptance Criteria (demo checklist)
+	•	Export button produces a multi‑page PDF that exactly reflects the AddendaBuilder layouts (2/4/6‑up), with captions under each photo cell.
+	•	Image choice: uses blurred variant if available; otherwise the display image.
+	•	Contain fit preserves aspect ratio; images centered in their cell; no stretching.
+	•	Header/Footer render when enabled; Page X of Y correct.
+	•	Watermark (if set) is diagonal, light, and non‑obstructive.
+	•	Metadata (title/author/subject/keywords) populated when provided.
+	•	Upload to addendaExport succeeds; a download link is displayed; the file also opens in a new tab.
+	•	Errors for 401/403 show the auth banner explaining .env.local config.
+	•	Large exports (10–20 images) finish without freezing the UI (loading indicator visible).
+
+⸻
+
+8) Manual Test Script (copy/paste)
+	1.	Open /orders/123 → Photos tab. Ensure AddendaBuilder shows with at least 2 pages (4‑up and 6‑up).
+	2.	Ensure several photos have processing.blurredPath (or simulate a couple) and others don’t.
+	3.	In Export Toolbar, choose:
+	•	Page size: LETTER, orientation portrait, margins 0.5”, watermark “DRAFT”.
+	•	Caption size 9, max lines 2.
+	4.	Click Export PDF → spinner shows; confirm Page 1…N footer, watermark, and accurate layout.
+	5.	Verify images fit without distortion, captions wrap with ellipsis if too long.
+	6.	Confirm blurred images appear blurred; non‑blurred use display variant.
+	7.	The app shows a Download link; click it and view the PDF.
+	8.	Toggle to A4 & landscape, export again; verify new geometry and page count.
+	9.	Temporarily break auth (change .env.local user) → export → see auth banner.
+	10.	Export a large set (≥12 photos) and ensure UI remains responsive (spinner/progress visible).
+
+⸻
+
+9) Performance & Quality Notes
+	•	Avoid embedding original full‑res images; prefer display size or blurred derivative.
+	•	If files are too large, implement optional raster downscale to match dpiTarget using an offscreen canvas before embed.
+	•	Keep text rendering crisp by using vector text; don’t rasterize text layers.
+	•	Ensure color space is sRGB; avoid CSS filters—draw raw pixels.
+
+⸻
+
+10) Common Pitfalls (guard against)
+	•	Stretched images → must use “contain” fit with center alignment.
+	•	Caption overflow → must wrap to max lines and ellipsis.
+	•	Wrong page numbers → compute total pages before drawing; draw “X of Y”.
+	•	Auth missing → always include dev auth headers; show banner on 401/403.
+	•	Blocking UI → wrap export in async with a visible progress overlay.
+
+⸻
+
+11) Minimal Unit Tests (optional if time)
+	•	wrapText()—long words, multi‑line, ellipsis behavior.
+	•	getCells()—cell rects for 2/4/6‑up match expected counts and respect margins.
+
+⸻
+
+Deliver exactly this slice: a reliable, printable PDF export path from the AddendaBuilder, uploaded to the existing export endpoint, with good UX and clear errors.

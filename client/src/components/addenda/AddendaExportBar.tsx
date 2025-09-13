@@ -51,11 +51,15 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ADDENDA_TEMPLATES, TemplateThumbnail } from './AddendaTemplates';
 import { cn } from '@/lib/utils';
+import { AddendaPdfExporter } from './AddendaPdfExporter';
+import { PhotoMeta, PhotoAddenda } from '@/types/photos';
 
 interface AddendaExportBarProps {
+  orderId: string;
   document: AddendaDocument;
+  addenda: PhotoAddenda;
+  photosById: Record<string, PhotoMeta>;
   stats: AddendaStats;
-  onExportPDF: (settings: PDFExportSettings) => void;
   onApplyTemplate: (template: AddendaTemplate) => void;
   onPreview: () => void;
   onSave: () => void;
@@ -63,9 +67,11 @@ interface AddendaExportBarProps {
 }
 
 export function AddendaExportBar({
+  orderId,
   document,
+  addenda,
+  photosById,
   stats,
-  onExportPDF,
   onApplyTemplate,
   onPreview,
   onSave,
@@ -90,7 +96,6 @@ export function AddendaExportBar({
   const [showTemplatesDialog, setShowTemplatesDialog] = useState(false);
 
   const handleExport = () => {
-    onExportPDF(exportSettings);
     setShowExportDialog(false);
   };
 
@@ -182,9 +187,18 @@ export function AddendaExportBar({
               <FileText className="h-4 w-4 mr-2" />
               Export as PDF
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExportPDF({ ...exportSettings, quality: 'low' })}>
-              <Image className="h-4 w-4 mr-2" />
-              Quick Export (Low Quality)
+            <DropdownMenuItem asChild>
+              <AddendaPdfExporter
+                orderId={orderId}
+                addenda={addenda}
+                photosById={photosById}
+                settings={{ ...exportSettings, quality: 'low' }}
+              >
+                <div className="flex items-center">
+                  <Image className="h-4 w-4 mr-2" />
+                  Quick Export (Low Quality)
+                </div>
+              </AddendaPdfExporter>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onPreview}>
@@ -333,10 +347,19 @@ export function AddendaExportBar({
                 <Button variant="outline" onClick={() => setShowExportDialog(false)} className="flex-1">
                   Cancel
                 </Button>
-                <Button onClick={handleExport} className="flex-1" data-testid="button-export-confirm">
-                  <Download className="h-4 w-4 mr-2" />
-                  Export PDF
-                </Button>
+                <AddendaPdfExporter
+                  orderId={orderId}
+                  addenda={addenda}
+                  photosById={photosById}
+                  settings={exportSettings}
+                  onExportComplete={() => setShowExportDialog(false)}
+                  className="flex-1"
+                >
+                  <Button className="w-full" data-testid="button-export-confirm">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export PDF
+                  </Button>
+                </AddendaPdfExporter>
               </div>
             </div>
           </DialogContent>
