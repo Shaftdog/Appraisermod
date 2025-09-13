@@ -28,7 +28,7 @@ interface InitResponse {
 
 interface PreviewResponse {
   type: 'PREVIEW_RESPONSE';
-  blobUrl: string;
+  blob?: Blob;
   error?: string;
 }
 
@@ -263,16 +263,13 @@ async function processPreview(message: PreviewMessage): Promise<PreviewResponse>
       throw new Error('OffscreenCanvas not available');
     }
     
-    const blobUrl = URL.createObjectURL(blob);
-    
     return {
       type: 'PREVIEW_RESPONSE',
-      blobUrl,
+      blob,
     };
   } catch (error) {
     return {
       type: 'PREVIEW_RESPONSE',
-      blobUrl: '',
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
@@ -302,7 +299,6 @@ self.addEventListener('message', async (event: MessageEvent<WorkerMessage>) => {
   } catch (error) {
     self.postMessage({
       type: 'PREVIEW_RESPONSE',
-      blobUrl: '',
       error: error instanceof Error ? error.message : 'Unknown error',
     } as PreviewResponse);
   }

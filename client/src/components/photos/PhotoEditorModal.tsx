@@ -104,7 +104,7 @@ export function PhotoEditorModal({ isOpen, onClose, photo, orderId, onSave }: Ph
       const worker = new Worker(new URL('./blurWorker.ts', import.meta.url), { type: 'module' });
       
       worker.onmessage = (event) => {
-        const { type, hasOffscreenCanvas, blobUrl, error } = event.data;
+        const { type, hasOffscreenCanvas, blob, error } = event.data;
         
         if (type === 'INIT_RESPONSE') {
           setWorkerSupported(hasOffscreenCanvas);
@@ -113,7 +113,13 @@ export function PhotoEditorModal({ isOpen, onClose, photo, orderId, onSave }: Ph
             console.warn('Worker preview failed:', error);
             // Worker doesn't support the operation, fall back to main thread
             setWorkerSupported(false);
-          } else if (blobUrl) {
+          } else if (blob) {
+            // Revoke previous blob URL to prevent memory leaks
+            if (previewBlobUrl) {
+              URL.revokeObjectURL(previewBlobUrl);
+            }
+            // Create object URL in main thread context
+            const blobUrl = URL.createObjectURL(blob);
             setPreviewBlobUrl(blobUrl);
           }
         }
@@ -123,6 +129,10 @@ export function PhotoEditorModal({ isOpen, onClose, photo, orderId, onSave }: Ph
       setBlurWorker(worker);
       
       return () => {
+        // Cleanup blob URL when worker is terminated
+        if (previewBlobUrl) {
+          URL.revokeObjectURL(previewBlobUrl);
+        }
         worker.terminate();
       };
     } else {
@@ -318,6 +328,10 @@ export function PhotoEditorModal({ isOpen, onClose, photo, orderId, onSave }: Ph
       // Convert to blob and create URL
       canvas.toBlob((blob) => {
         if (blob) {
+          // Revoke previous blob URL to prevent memory leaks
+          if (previewBlobUrl) {
+            URL.revokeObjectURL(previewBlobUrl);
+          }
           const blobUrl = URL.createObjectURL(blob);
           setPreviewBlobUrl(blobUrl);
         }
@@ -325,7 +339,7 @@ export function PhotoEditorModal({ isOpen, onClose, photo, orderId, onSave }: Ph
     } catch (error) {
       console.warn('Main-thread preview fallback failed:', error);
     }
-  }, [workerSupported, workingRects, workingBrush]);
+  }, [workerSupported, workingRects, workingBrush, previewBlobUrl]);
   
   // Send preview requests to worker when masks change
   useEffect(() => {
@@ -446,6 +460,23 @@ export function PhotoEditorModal({ isOpen, onClose, photo, orderId, onSave }: Ph
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, undo, redo]);
   
+  // Cleanup blob URL when component unmounts or dialog closes
+  useEffect(() => {
+    return () => {
+      if (previewBlobUrl) {
+        URL.revokeObjectURL(previewBlobUrl);
+      }
+    };
+  }, [previewBlobUrl]);
+
+  // Cleanup blob URL when dialog closes
+  useEffect(() => {
+    if (!isOpen && previewBlobUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+      setPreviewBlobUrl(null);
+    }
+  }, [isOpen, previewBlobUrl]);
+
   const imageUrl = photo.processing?.blurredPath || photo.displayPath;
   const unresolvedDetections = workingDetections.filter(d => !d.accepted).length;
   const acceptedDetections = workingDetections.filter(d => d.accepted).length;
