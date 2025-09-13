@@ -1,0 +1,199 @@
+PROJECT TITLE
+FE: Time Adjustments – Effective Date Alignment + Basis Handling (SalePrice vs $/SF)
+
+GOAL
+Refine the existing Market/Comps time-adjustment pipeline to:
+	1.	Use the Order Effective Date (not “today”) when computing months-delta.
+	2.	Respect the basis selected in the Market tab (Sale Price or $/SF) and apply the adjustment accordingly in Comps.
+
+No new secured backend routes. You may extend the Market mock API you introduced for MCR (under app/api/orders/[id]/market/*) and reuse existing Comps UI.
+
+⸻
+
+Scope Rules (important)
+	•	Do NOT modify any secured Photo API endpoints.
+	•	It’s OK to update/extend the Market mock endpoints you created earlier (settings, mcr/compute, time-adjustments) and their JSON files under /data/orders/<id>/market/.
+	•	Keep all endpoint paths and auth headers centralized in existing config files.
+
+⸻
+
+Types & Contracts (add/extend)
+
+types/market.ts (extend existing):
+
+export type TimeAdjustmentBasis = 'salePrice' | 'ppsf';
+
+export interface MarketSettings {
+  orderId: string;
+  monthsBack: 12 | 18 | 24;
+  statuses: ('active'|'pending'|'sold'|'expired')[];
+  usePolygon: boolean;
+  metric: TimeAdjustmentBasis;         // basis used for trend estimation
+  smoothing: 'none'|'ema';
+  minSalesPerMonth: number;
+  // NEW:
+  effectiveDateISO?: string;           // order’s effective date; fallback to today
+}
+
+export interface TimeAdjustments {
+  orderId: string;
+  basis: TimeAdjustmentBasis;          // 'salePrice' | 'ppsf'
+  pctPerMonth: number;                 // e.g., 0.007 = +0.7%/mo
+  effectiveDateISO: string;            // REQUIRED after this change
+  computedAt: string;
+}
+
+
+⸻
+
+Market Mock API Changes
+
+Files under app/api/orders/[id]/market/… (Next.js route handlers):
+	1.	Settings
+	•	GET /api/orders/:id/market/settings
+	•	PUT /api/orders/:id/market/settings
+	•	Accept effectiveDateISO (validate ISO) and metric ('salePrice'|'ppsf').
+	2.	Compute (if needed):
+	•	POST /api/orders/:id/market/mcr/compute
+	•	Continue computing trend on log(metric) (unchanged); the chosen metric dictates if we use sale price or $/SF medians.
+	•	No change to math—just ensure the chosen metric is propagated.
+	3.	Time Adjustments
+	•	GET /api/orders/:id/market/time-adjustments
+	•	PUT /api/orders/:id/market/time-adjustments
+	•	Now require: { pctPerMonth, basis, effectiveDateISO }.
+	•	When user clicks “Use this time adjustment,” store both basis (from current Market metric) and the effectiveDateISO (from settings, or from an inline date picker if provided).
+
+Storage
+Update /data/orders/<id>/market/settings.json and /time-adjustments.json to include the new fields.
+
+⸻
+
+UI Changes
+
+A) Market Tab
+
+Toolbar additions
+	•	Effective Date picker (defaults to order due date/effective date if available, else today). Store in MarketSettings.effectiveDateISO.
+	•	Basis toggle already exists as metric (Sale Price vs $/SF). Keep it the single source of truth.
+
+“Use this time adjustment” button
+	•	When clicked:
+	•	Payload to PUT /market/time-adjustments:
+
+{
+  "pctPerMonth": <number>,
+  "basis": <settings.metric>,
+  "effectiveDateISO": <settings.effectiveDateISO>
+}
+
+
+	•	Show a small summary chip after save:
+“Applied +0.7%/mo on Sale Price basis, effective 2025-09-01.”
+
+Narrative
+	•	Append: “Time adjustments are calculated to the effective date (YYYY-MM-DD) on a [Sale Price|$/SF] basis.”
+
+B) Comps Tab
+
+Where to change
+	•	The comp card footer/badges where you currently show time-adjusted price.
+
+New behavior
+	•	Read GET /market/time-adjustments once on tab load (or via shared store).
+	•	Compute months delta using effectiveDateISO (not today):
+
+months = diffInMonths(saleDate, effectiveDateISO) // signed; if comp sold before effective date, months > 0
+adjFactor = Math.pow(1 + pctPerMonth, months)
+
+
+	•	If basis === 'salePrice':
+	•	Show Original Sale Price (green)
+	•	Show Time-Adjusted Price (blue) = salePrice * adjFactor
+	•	If basis === 'ppsf':
+	•	Compute adjusted $/SF: ppsf_adj = ppsf * adjFactor
+	•	Derive time-adjusted price: ppsf_adj * GLAcomp (show GLA used).
+	•	Display both: $X / SF → adj $Y / SF, and adjusted price line under it.
+	•	If GLA is missing for a comp, show a tooltip “GLA required to compute adjusted price on $/SF basis.”
+
+UX
+	•	Add a small “Eff. Date” pill next to the time-adjustment badge (e.g., “Eff: 2025-09-01”) for transparency.
+
+⸻
+
+Utilities
+
+lib/timeAdjust.ts
+
+import { differenceInMonths } from 'date-fns';
+
+export function monthsBetween(saleISO: string, effectiveISO: string) {
+  // Use whole months difference; if you want fractional months:
+  // compute days diff / 30.4375 (but default to whole months for now)
+  return Math.max(0, differenceInMonths(new Date(effectiveISO), new Date(saleISO)));
+}
+
+export function adjFactor(pctPerMonth: number, months: number) {
+  return Math.pow(1 + pctPerMonth, months);
+}
+
+Note: Stick to whole months unless you decide to support fractional months later (add a toggle if needed).
+
+⸻
+
+Comps Card Rendering (pseudocode)
+
+if (timeAdj && comp.salePrice) {
+  const months = monthsBetween(comp.saleDate, timeAdj.effectiveDateISO);
+  const factor = adjFactor(timeAdj.pctPerMonth, months);
+
+  if (timeAdj.basis === 'salePrice') {
+    const adjPrice = comp.salePrice * factor;
+    // render: $salePrice (green)
+    //         $adjPrice (+X% over Y months) (blue) + Badge [Eff: YYYY-MM-DD]
+  } else { // 'ppsf'
+    if (comp.GLAsf && comp.salePrice) {
+      const ppsf = comp.salePrice / comp.GLAsf;
+      const ppsfAdj = ppsf * factor;
+      const adjPrice = ppsfAdj * comp.GLAsf;
+      // render both $/SF and derived price
+    } else {
+      // show basis note/tooltip
+    }
+  }
+}
+
+
+⸻
+
+Acceptance Criteria (demo checklist)
+	•	Market settings store and load an Effective Date; visible in UI, persisted to JSON.
+	•	Time-adjustments save with pct/mon, basis, and effectiveDateISO.
+	•	Comps use effective date (not today) to compute months delta.
+	•	Basis respected:
+	•	Sale Price basis → adjusts sale price directly.
+	•	$/SF basis → adjusts $/SF then derives adjusted price using GLA.
+	•	Comp cards show a small “Eff: YYYY-MM-DD” pill alongside the %/mo badge.
+	•	Missing GLA on $/SF basis triggers a friendly tooltip and skips the adjusted price line (no crashes).
+	•	Narrative reflects basis and effective date.
+	•	No changes to secured Photo endpoints.
+
+⸻
+
+Manual Test Script (copy/paste)
+	1.	Market tab → set Effective Date = first of next month; metric = Sale Price; Compute → Use this time adjustment.
+	2.	Comps tab → pick a comp sold 10 months before effective date: verify months=10, adjusted price = sale price × (1+rate)^10.
+	3.	Back to Market, switch metric = $/SF, save time adj.
+	4.	Comps → verify cards now show $/SF adjusted and derived adjusted price (for comps with GLA).
+	5.	Clear GLA on one comp in mock data → that card shows a tooltip “GLA required …” and hides derived price.
+	6.	Change effective date to a much earlier date → Comps recalculates higher months delta and larger adjustment.
+	7.	Narrative shows basis and effective date.
+
+⸻
+
+Nice-to-have (optional if time)
+	•	Toggle for fractional months vs whole months.
+	•	Per-order default effective date = Order due date (if available from your Order shell); otherwise today.
+
+⸻
+
+Deliver exactly this refinement slice so time adjustments are aligned to the assignment’s effective date and properly respect the selected basis across Market and Comps.
