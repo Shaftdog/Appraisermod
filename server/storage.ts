@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection } from "@shared/schema";
+import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks } from "@shared/schema";
 import { users, orders, versions } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -44,6 +44,22 @@ export interface IStorage {
   updateCompSelection(orderId: string, updates: Partial<CompSelection>): Promise<CompSelection>;
   lockComp(orderId: string, compId: string, locked: boolean): Promise<CompSelection>;
   swapComp(orderId: string, candidateId: string, targetIndex: 0 | 1 | 2): Promise<CompSelection>;
+
+  // Photos Module methods
+  getPhotos(orderId: string): Promise<PhotoMeta[]>;
+  getPhoto(orderId: string, photoId: string): Promise<PhotoMeta | undefined>;
+  createPhoto(orderId: string, photoData: Omit<PhotoMeta, 'id' | 'createdAt' | 'updatedAt'>): Promise<PhotoMeta>;
+  updatePhoto(orderId: string, photoId: string, updates: Partial<Pick<PhotoMeta, 'category' | 'caption' | 'masks' | 'processing'>>): Promise<PhotoMeta>;
+  deletePhoto(orderId: string, photoId: string): Promise<void>;
+  updatePhotoMasks(orderId: string, photoId: string, masks: PhotoMasks): Promise<PhotoMeta>;
+  processPhoto(orderId: string, photoId: string): Promise<PhotoMeta>;
+  bulkUpdatePhotos(orderId: string, photoIds: string[], updates: { category?: PhotoCategory; captionPrefix?: string }): Promise<PhotoMeta[]>;
+  
+  getPhotoAddenda(orderId: string): Promise<PhotoAddenda>;
+  updatePhotoAddenda(orderId: string, addenda: Omit<PhotoAddenda, 'orderId'>): Promise<PhotoAddenda>;
+  exportPhotoAddenda(orderId: string): Promise<{ pdfPath: string }>;
+  
+  getPhotosQcSummary(orderId: string): Promise<PhotosQcSummary>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -666,6 +682,229 @@ export class DatabaseStorage implements IStorage {
     
     this.compSelections.set(orderId, selection);
     return selection;
+  }
+
+  // Photos Module implementation
+  private photosByOrder: Map<string, PhotoMeta[]> = new Map();
+  private photoAddendas: Map<string, PhotoAddenda> = new Map();
+
+  async getPhotos(orderId: string): Promise<PhotoMeta[]> {
+    return this.photosByOrder.get(orderId) || [];
+  }
+
+  async getPhoto(orderId: string, photoId: string): Promise<PhotoMeta | undefined> {
+    const photos = await this.getPhotos(orderId);
+    return photos.find(p => p.id === photoId);
+  }
+
+  async createPhoto(orderId: string, photoData: Omit<PhotoMeta, 'id' | 'createdAt' | 'updatedAt'>): Promise<PhotoMeta> {
+    const id = `photo-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const now = new Date().toISOString();
+    
+    const photo: PhotoMeta = {
+      ...photoData,
+      id,
+      orderId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const photos = await this.getPhotos(orderId);
+    photos.push(photo);
+    this.photosByOrder.set(orderId, photos);
+
+    return photo;
+  }
+
+  async updatePhoto(orderId: string, photoId: string, updates: Partial<Pick<PhotoMeta, 'category' | 'caption' | 'masks' | 'processing'>>): Promise<PhotoMeta> {
+    const photos = await this.getPhotos(orderId);
+    const photoIndex = photos.findIndex(p => p.id === photoId);
+    
+    if (photoIndex === -1) {
+      throw new Error('Photo not found');
+    }
+
+    const updatedPhoto = {
+      ...photos[photoIndex],
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+
+    photos[photoIndex] = updatedPhoto;
+    this.photosByOrder.set(orderId, photos);
+
+    return updatedPhoto;
+  }
+
+  async deletePhoto(orderId: string, photoId: string): Promise<void> {
+    const photos = await this.getPhotos(orderId);
+    const filteredPhotos = photos.filter(p => p.id !== photoId);
+    
+    if (filteredPhotos.length === photos.length) {
+      throw new Error('Photo not found');
+    }
+
+    this.photosByOrder.set(orderId, filteredPhotos);
+
+    // Also remove from addenda if present
+    const addenda = await this.getPhotoAddenda(orderId);
+    let addendaUpdated = false;
+    
+    addenda.pages.forEach(page => {
+      page.cells.forEach(cell => {
+        if (cell.photoId === photoId) {
+          cell.photoId = undefined;
+          addendaUpdated = true;
+        }
+      });
+    });
+
+    if (addendaUpdated) {
+      await this.updatePhotoAddenda(orderId, {
+        pages: addenda.pages,
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  async updatePhotoMasks(orderId: string, photoId: string, masks: PhotoMasks): Promise<PhotoMeta> {
+    return this.updatePhoto(orderId, photoId, { 
+      masks,
+      processing: {
+        processingStatus: 'pending',
+        lastProcessedAt: new Date().toISOString()
+      }
+    });
+  }
+
+  async processPhoto(orderId: string, photoId: string): Promise<PhotoMeta> {
+    const photo = await this.getPhoto(orderId, photoId);
+    if (!photo) {
+      throw new Error('Photo not found');
+    }
+
+    // Simulate processing delay in real implementation
+    const blurredPath = photo.displayPath.replace('.jpg', '_blurred.jpg');
+    
+    return this.updatePhoto(orderId, photoId, {
+      processing: {
+        blurredPath,
+        processingStatus: 'completed',
+        lastProcessedAt: new Date().toISOString()
+      }
+    });
+  }
+
+  async bulkUpdatePhotos(orderId: string, photoIds: string[], updates: { category?: PhotoCategory; captionPrefix?: string }): Promise<PhotoMeta[]> {
+    const results: PhotoMeta[] = [];
+    
+    for (const photoId of photoIds) {
+      const photo = await this.getPhoto(orderId, photoId);
+      if (!photo) continue;
+
+      const photoUpdates: any = {};
+      if (updates.category) {
+        photoUpdates.category = updates.category;
+      }
+      if (updates.captionPrefix) {
+        photoUpdates.caption = updates.captionPrefix + (photo.caption || '');
+      }
+
+      const updatedPhoto = await this.updatePhoto(orderId, photoId, photoUpdates);
+      results.push(updatedPhoto);
+    }
+
+    return results;
+  }
+
+  async getPhotoAddenda(orderId: string): Promise<PhotoAddenda> {
+    const existing = this.photoAddendas.get(orderId);
+    if (existing) {
+      return existing;
+    }
+
+    // Return default empty addenda
+    const defaultAddenda: PhotoAddenda = {
+      orderId,
+      pages: [],
+      updatedAt: new Date().toISOString()
+    };
+
+    this.photoAddendas.set(orderId, defaultAddenda);
+    return defaultAddenda;
+  }
+
+  async updatePhotoAddenda(orderId: string, addenda: Omit<PhotoAddenda, 'orderId'>): Promise<PhotoAddenda> {
+    const updated: PhotoAddenda = {
+      orderId,
+      ...addenda,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.photoAddendas.set(orderId, updated);
+    return updated;
+  }
+
+  async exportPhotoAddenda(orderId: string): Promise<{ pdfPath: string }> {
+    const addenda = await this.getPhotoAddenda(orderId);
+    
+    // Simulate PDF generation
+    const pdfPath = `/data/orders/${orderId}/photos/addenda.pdf`;
+    
+    // Update addenda with export path
+    await this.updatePhotoAddenda(orderId, {
+      ...addenda,
+      exportedPdfPath: pdfPath
+    });
+
+    return { pdfPath };
+  }
+
+  async getPhotosQcSummary(orderId: string): Promise<PhotosQcSummary> {
+    const photos = await this.getPhotos(orderId);
+    
+    // Required categories for QC
+    const requiredCategories: PhotoCategory[] = ['exteriorFront', 'street', 'kitchen', 'bath', 'living'];
+    
+    // Count photos by category
+    const categoryCounts: Record<PhotoCategory, number> = {
+      exteriorFront: 0, exteriorLeft: 0, exteriorRight: 0, exteriorRear: 0,
+      street: 0, addressUnit: 0,
+      kitchen: 0, bath: 0, living: 0, bedroom: 0,
+      mechanical: 0, deficiency: 0, viewWaterfront: 0, outbuilding: 0, other: 0
+    };
+
+    photos.forEach(photo => {
+      if (photo.category) {
+        categoryCounts[photo.category]++;
+      }
+    });
+
+    // Find missing required categories
+    const missingCategories = requiredCategories.filter(cat => categoryCounts[cat] === 0);
+    
+    // Count unresolved face detections
+    const unresolvedDetections = photos.reduce((count, photo) => {
+      if (photo.masks?.autoDetections) {
+        return count + photo.masks.autoDetections.filter(d => !d.accepted).length;
+      }
+      return count;
+    }, 0);
+
+    // Determine status
+    let status: 'green' | 'yellow' | 'red' = 'green';
+    if (missingCategories.length > 0 || unresolvedDetections > 0) {
+      status = missingCategories.length > 0 ? 'red' : 'yellow';
+    }
+
+    return {
+      requiredPresent: missingCategories.length === 0,
+      missingCategories,
+      unresolvedDetections,
+      status,
+      photoCount: photos.length,
+      categoryCounts
+    };
   }
 }
 
