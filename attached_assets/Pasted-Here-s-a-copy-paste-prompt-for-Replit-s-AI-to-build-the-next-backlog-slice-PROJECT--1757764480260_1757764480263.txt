@@ -1,0 +1,332 @@
+Here’s a **copy‑paste prompt** for Replit’s AI to build the next backlog slice:
+
+---
+
+**PROJECT TITLE:**
+Build “Weights & Presets” UI (Next.js + TypeScript) — **Slider components with presets; weight profiles; “Reset to Shop Defaults”**
+
+**GOAL:**
+Extend the existing Order UI (from the previous sprint) by adding a **Weights** panel to the **Comps** tab that controls comp‑ranking logic via sliders. Include:
+
+1. **Accessible slider components** for factor weights,
+2. **Preset chips** (quick apply),
+3. **Weight profile management** (save/load personal & order‑specific),
+4. **Reset to Shop Defaults** button,
+5. Mock API persistence and live re‑ranking of the tab’s mock comp list.
+
+> This is **frontend‑only** with **mock APIs**, matching the prior project stack (Next.js App Router + TypeScript + Tailwind). Keep code production‑quality and ready to wire to a real backend later.
+
+---
+
+## Tech & Conventions
+
+* **Framework:** Next.js **14+** App Router, **TypeScript**
+* **Styling:** Tailwind CSS (reuse existing config)
+* **Accessibility:** Keyboard + screen reader support (no mouse‑only interactions)
+* **Libraries (MIT or similar):**
+
+  * `@radix-ui/react-slider` for accessible sliders
+  * `classnames`
+  * (reuse prior libs: heroicons, jsondiffpatch, etc., if already installed)
+* **State:** Local React state + mock API routes under `app/api` (persist to JSON files in `data/`)
+* **No real integrations** (MLS, etc.). Use seeded mock comps to show live re‑ranking.
+
+---
+
+## Feature Scope (this sprint)
+
+### 1) Weights Panel (Comps tab)
+
+Add a right‑side panel (or top section) in **Comps** with sliders for factor importance.
+
+**Factors (keys & labels):**
+
+* `distance` — Proximity / location proximity
+* `recency` — Date of sale / time since sale
+* `gla` — GLA similarity
+* `quality` — Quality rating similarity
+* `condition` — Condition rating similarity
+
+**Sliders:**
+
+* Range **0–10** (integer steps); show numeric value; keyboard step support (Arrow keys; Shift+Arrow = ±2)
+* Tooltip/help for each factor (what it influences)
+* Display **normalized weight %** per factor (auto computed: each weight / sum(weights))
+* Show **sum 100%** indicator; if sum of raw sliders = 0, disable “Apply” and show hint “Increase at least one weight.”
+
+**Constraints Sliders (secondary group):**
+
+* `glaTolerancePct` — allowed variance (e.g., 5–20%)
+* `distanceCapMiles` — soft cap for proximity scoring (e.g., 0.25–5.0 mi)
+
+> These do not have to be wired to complex logic; just pass them to the scoring function and reflect in tooltips.
+
+**UI:**
+
+* Section header: **“Weights & Constraints”**
+* Buttons: **Apply**, **Reset to Shop Defaults** (see #3), **Save as Profile** (see #2)
+
+---
+
+### 2) Presets & Profiles
+
+Implement quick‑apply **preset chips** and a small **profile manager**.
+
+**Preset chips (top row, click to apply):**
+
+* **Shop Default (Hi‑Low Standard)**
+
+  * weights: distance 8, recency 8, gla 7, quality 6, condition 6
+  * constraints: glaTolerancePct 10, distanceCapMiles 0.5
+* **Recency First (Declining Market)**
+
+  * weights:  distance 6, recency 10, gla 7, quality 5, condition 5
+  * constraints: glaTolerancePct 12, distanceCapMiles 1.0
+* **Proximity First (Micro‑Market)**
+
+  * weights:  distance 10, recency 7, gla 7, quality 5, condition 5
+  * constraints: glaTolerancePct 10, distanceCapMiles 0.3
+* **GLA Strict (Tight Bracketing)**
+
+  * weights:  distance 7, recency 7, gla 9, quality 6, condition 5
+  * constraints: glaTolerancePct 6, distanceCapMiles 0.5
+* **Quality/Condition Sensitive (Renovation Heavy)**
+
+  * weights:  distance 6, recency 7, gla 7, quality 9, condition 8
+  * constraints: glaTolerancePct 10, distanceCapMiles 0.8
+* **Complex / Out‑of‑Area**
+
+  * weights:  distance 5, recency 8, gla 7, quality 7, condition 7
+  * constraints: glaTolerancePct 15, distanceCapMiles 2.0
+
+**Weight profiles (save/load/edit):**
+
+* **Types:**
+
+  * **Shop default** (read‑only, global)
+  * **My profiles** (per user, e.g., saved locally in mock API)
+  * **Order overrides** (current order’s active weights)
+* **UI Controls:**
+
+  * Dropdown **Profile Selector**: “Shop Default”, plus user saved profiles
+  * **Save as Profile** (name input, optional description) → saves to “My profiles”
+  * **Update Profile** for the currently selected user profile (button disabled if “Shop Default” is selected)
+  * **Delete Profile** (confirm dialog; disabled for “Shop Default”)
+
+**Behavior:**
+
+* Applying a preset immediately updates sliders (but does not auto‑persist until **Apply** is clicked).
+* Switching profiles updates sliders to that profile’s values.
+* “My profiles” are available across orders (in mocks, just a single JSON file).
+* Order overrides are stored per order.
+
+---
+
+### 3) Reset to Shop Defaults
+
+Button within the panel to **reset the current order’s weights** to the shop default preset (values above).
+
+* **Confirm dialog**: “Reset weights for this order to the shop defaults? This will overwrite unsaved changes.”
+* After reset, call mock API to persist as the order’s active weights.
+
+---
+
+### 4) Live Re‑ranking (mocked)
+
+Use a small set of **mock comps** already visible in the Comps tab. On **Apply**, re‑compute each comp’s score and **resort** the list.
+
+**Scoring function (implement in `lib/scoring.ts`):**
+
+```ts
+// Normalize 0–1 similarities; then score = sum(w_i * S_i), where w_i are normalized weights.
+S_dist   = 1 - clamp((dist - 0) / distanceCapMiles, 0, 1)
+S_time   = 1 - clamp((monthsSinceSale - 0) / timeWindowCap, 0, 1) // set timeWindowCap=12 by default for mock
+S_gla    = 1 - clamp( abs(GLAcomp - GLAsubj) / (GLAsubj * glaTolerancePct/100), 0, 1 )
+S_qual   = 1 - clamp( abs(Qualcomp - Qualsubj) / 2, 0, 1 ) // simple ordinal diff for mock
+S_cond   = 1 - clamp( abs(Condcomp - Condsubj) / 2, 0, 1 )
+score    = w_dist*S_dist + w_time*S_time + w_gla*S_gla + w_qual*S_qual + w_cond*S_cond
+```
+
+* `w_*` = normalized weights from sliders (each / sum).
+* Show each comp’s **score** and a small breakdown tooltip.
+
+---
+
+## Data & Types
+
+**Add to `types/weights.ts`:**
+
+```ts
+export type WeightKey = 'distance' | 'recency' | 'gla' | 'quality' | 'condition';
+
+export interface WeightSet {
+  distance: number;   // 0..10
+  recency: number;    // 0..10
+  gla: number;        // 0..10
+  quality: number;    // 0..10
+  condition: number;  // 0..10
+}
+
+export interface ConstraintSet {
+  glaTolerancePct: number;   // e.g., 5..20
+  distanceCapMiles: number;  // e.g., 0.25..5.0
+}
+
+export interface WeightProfile {
+  id: string;          // uuid
+  name: string;        // "Recency First"
+  description?: string;
+  weights: WeightSet;
+  constraints: ConstraintSet;
+  scope: 'shop' | 'user'; // shop = read-only
+  createdAt: string;
+  updatedAt: string;
+  author?: string;     // user display name for user profiles
+}
+
+export interface OrderWeights {
+  orderId: string;
+  activeProfileId?: string; // if derived from a saved profile
+  weights: WeightSet;
+  constraints: ConstraintSet;
+  updatedAt: string;
+  updatedBy: string;
+}
+```
+
+**Seed data (new files in `/data`):**
+
+* `shop-defaults.json` → one `WeightProfile` with `scope: "shop"` (Shop Default).
+* `user-profiles.json` → array of user `WeightProfile` (start empty or seed one example).
+* `order-weights-<orderId>.json` → single `OrderWeights` for sample order (start equal to shop default).
+* `comps-sample.json` → 8–12 mock comps with fields used by the scoring function (dist, monthsSinceSale, GLAcomp, Qualcomp, Condcomp, etc.)
+
+---
+
+## Mock API Routes
+
+Create under `app/api` (persist to JSON files; mirror shapes above):
+
+* `GET /api/weights/shop-default` → returns the shop default `WeightProfile`
+
+* `GET /api/weights/profiles` → returns list of user profiles
+
+* `POST /api/weights/profiles` → body `{name, description?, weights, constraints}` → creates user profile
+
+* `PUT /api/weights/profiles/:id` → update user profile
+
+* `DELETE /api/weights/profiles/:id` → delete user profile (block if scope = shop)
+
+* `GET /api/orders/:id/weights` → returns `OrderWeights`
+
+* `PUT /api/orders/:id/weights` → updates `OrderWeights` (apply current sliders)
+
+* `POST /api/orders/:id/weights/reset` → resets to shop default and saves
+
+* `GET /api/orders/:id/comps` → returns mock comps list
+
+  * **Server computes** scores using current `OrderWeights` and returns sorted list (so FE & BE contract is ready for real backend later).
+  * Alternatively, return raw comps and compute on FE; but include a **server route** too to show how we’ll do it later.
+
+> Validation: ensure values are within ranges; reject if out‑of‑bounds with a 400 and a useful error.
+
+---
+
+## UI Components to Implement
+
+* `components/weights/WeightSlider.tsx`
+
+  * Wrapper over Radix Slider with label, numeric value, tooltip, a11y support
+* `components/weights/ConstraintSlider.tsx`
+
+  * Similar to above; supports decimals for miles and %
+* `components/weights/WeightPresetChips.tsx`
+
+  * Renders the six preset chips; onClick → load values into sliders (dirty state)
+* `components/weights/WeightProfileSelector.tsx`
+
+  * Dropdown to choose “Shop Default” or a user profile; includes “Save as profile”, “Update profile”, “Delete”
+* `components/weights/WeightsPanel.tsx`
+
+  * Orchestrates sliders, presets, profile selector, Apply/Reset buttons; shows normalized % per factor and sum
+* `components/comps/CompList.tsx`
+
+  * Displays comps with current score, and a tooltip with score breakdown; re‑sort on Apply
+* `lib/scoring.ts`
+
+  * Implements similarity and score calculation with clamps; exported function used by FE and/or mock API
+* `lib/weights-normalize.ts`
+
+  * Normalize weights, compute percentages, guardrails for zero‑sum
+
+**Integration:** Mount `WeightsPanel` and `CompList` on the **Comps** tab page.
+
+---
+
+## UX Details
+
+* **Dirty state**: If sliders changed and not yet applied, show a small “Unsaved changes” pill and enable **Apply**.
+* **Profile label**: Show the currently applied profile name (“Order (custom)”, “Recency First”, etc.).
+* **Diff hint**: If your prior Version Diff Viewer exists, log a `VersionSnapshot` for the Comps tab when **Apply** is pressed, with `currentData.weights` and `currentData.constraints` so diffs show changes later.
+* **Tooltips** clarify each factor’s effect and the shop policy (e.g., “GLA slider controls how strongly size similarity influences ranking; default tolerance ±10%.“)
+
+---
+
+## Acceptance Criteria (demo checklist)
+
+* [ ] **Sliders** render for the 5 weights and 2 constraints, keyboard‑accessible, with numeric values
+* [ ] **Preset chips** instantly load values into sliders (dirty state visible)
+* [ ] **Profile selector** loads “Shop Default” and any user profiles
+* [ ] **Save as profile** creates a new user profile; **Update/Delete** work (delete blocked for shop)
+* [ ] **Apply** persists to `/api/orders/:id/weights` and triggers **live re‑ranking** of mock comps
+* [ ] **Reset to Shop Defaults** resets panel & persists; confirmation dialog shown
+* [ ] **Normalized percentages** display next to weights and sum to \~100% (allow rounding)
+* [ ] **Zero‑sum guardrail**: if all weights = 0, Apply is disabled with a helpful message
+* [ ] **Comps list** re‑sorts on Apply; each comp shows a score & a breakdown tooltip
+* [ ] **State persists** across page refresh; if you restart dev server and you serialize to file, values reload
+
+---
+
+## Manual Test Script (copy/paste)
+
+1. Open `/orders/123` → **Comps** tab.
+2. Confirm sliders show **Shop Default** values; comps list shows scores sorted.
+3. Click **Recency First** preset → sliders change; “Unsaved changes” visible; **Apply** → list re‑sorts with greater recency emphasis.
+4. **Save as profile** (“Rod – Winter Park Fast”) → switch to another profile then back → values load correctly.
+5. Drag **distance** to 10 and **distanceCapMiles** to 0.3 → **Apply** → nearby comps rise in rank.
+6. Click **Reset to Shop Defaults** → confirm → values reset; list re‑sorts; refresh page → values persist.
+7. Set all weights to 0 → **Apply** disabled with guidance message.
+8. Keyboard test: focus a slider, Arrow keys adjust; Shift+Arrow steps faster.
+9. Mobile viewport: sliders remain usable, chips wrap cleanly, Apply/Reset accessible.
+
+---
+
+## File Changes (expected)
+
+* New: `components/weights/*`, `components/comps/CompList.tsx`
+* New: `lib/scoring.ts`, `lib/weights-normalize.ts`
+* New: `types/weights.ts`
+* New data files: `/data/shop-defaults.json`, `/data/user-profiles.json`, `/data/order-weights-123.json`, `/data/comps-sample.json`
+* New API handlers under `app/api/weights/*` and `app/api/orders/[id]/*` (weights & comps)
+* Update: `app/orders/[orderId]/(tabs)/comps/page.tsx` to render the panel & list
+
+---
+
+## Non‑Goals (this sprint)
+
+* No backend DB, no real auth, no MLS calls
+* No advanced pairwise/ML scoring — keep the mock scoring deterministic and simple
+* No ENV/PDF export changes
+
+---
+
+## Quality Bar
+
+* TypeScript types for all payloads
+* a11y for sliders, tooltips, buttons
+* Tailwind utility classes (no inline styles), responsive layout
+* Clean separation of UI from persistence logic; easy to replace mock APIs later
+
+---
+
+**Deliver exactly this slice**, integrated into the existing project from the previous sprint.

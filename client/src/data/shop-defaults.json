@@ -1,0 +1,19 @@
+{
+  "id": "shop-default-profile",
+  "name": "Shop Default (Hi-Low Standard)",
+  "description": "Standard shop policy for high-low methodology",
+  "weights": {
+    "distance": 8,
+    "recency": 8,
+    "gla": 7,
+    "quality": 6,
+    "condition": 6
+  },
+  "constraints": {
+    "glaTolerancePct": 10,
+    "distanceCapMiles": 0.5
+  },
+  "scope": "shop",
+  "createdAt": "2025-01-01T00:00:00.000Z",
+  "updatedAt": "2025-01-01T00:00:00.000Z"
+}

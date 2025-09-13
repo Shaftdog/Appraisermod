@@ -5,6 +5,8 @@ import { StatusChip } from '@/components/StatusChip';
 import { SignoffPanel } from '@/components/SignoffPanel';
 import { VersionDiffViewer } from '@/components/VersionDiffViewer';
 import { Toolbar } from '@/components/Toolbar';
+import { WeightsPanel } from '@/components/weights/WeightsPanel';
+import { CompList } from '@/components/comps/CompList';
 import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
@@ -13,6 +15,7 @@ export default function Comps() {
   const params = useParams<{ orderId: string }>();
   const orderId = params?.orderId;
   const [showVersions, setShowVersions] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -44,6 +47,10 @@ export default function Comps() {
       });
     }
   });
+
+  const handleWeightsApplied = () => {
+    setRefreshTrigger(prev => prev + 1);
+  };
 
   if (!order) return null;
 
@@ -103,41 +110,19 @@ export default function Comps() {
         </div>
       )}
 
-      {/* Comps Table */}
-      <div className="bg-card border border-border rounded-lg overflow-hidden">
-        <div className="p-6 border-b border-border">
-          <h3 className="font-medium text-foreground">Comparable Sales Data</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-muted">
-              <tr>
-                <th className="text-left p-4 text-sm font-medium text-muted-foreground">Address</th>
-                <th className="text-left p-4 text-sm font-medium text-muted-foreground">Sale Price</th>
-                <th className="text-left p-4 text-sm font-medium text-muted-foreground">Sale Date</th>
-                <th className="text-left p-4 text-sm font-medium text-muted-foreground">Sq Ft</th>
-                <th className="text-left p-4 text-sm font-medium text-muted-foreground">$/Sq Ft</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-border">
-                <td className="p-4 text-sm" data-testid="comp-address-1">1240 Oak Street</td>
-                <td className="p-4 text-sm font-medium" data-testid="comp-price-1">$472,000</td>
-                <td className="p-4 text-sm" data-testid="comp-date-1">Feb 15, 2024</td>
-                <td className="p-4 text-sm" data-testid="comp-sqft-1">2,380</td>
-                <td className="p-4 text-sm" data-testid="comp-price-per-sqft-1">$198</td>
-              </tr>
-              <tr className="border-b border-border">
-                <td className="p-4 text-sm" data-testid="comp-address-2">1156 Maple Avenue</td>
-                <td className="p-4 text-sm font-medium" data-testid="comp-price-2">$495,000</td>
-                <td className="p-4 text-sm" data-testid="comp-date-2">Jan 28, 2024</td>
-                <td className="p-4 text-sm" data-testid="comp-sqft-2">2,520</td>
-                <td className="p-4 text-sm" data-testid="comp-price-per-sqft-2">$196</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      {/* Weights & Presets Panel */}
+      <div className="mb-6">
+        <WeightsPanel 
+          orderId={orderId!} 
+          onWeightsApplied={handleWeightsApplied}
+        />
       </div>
+
+      {/* Comparable Properties List */}
+      <CompList 
+        orderId={orderId!} 
+        refreshTrigger={refreshTrigger}
+      />
 
       {showVersions && (
         <VersionDiffViewer

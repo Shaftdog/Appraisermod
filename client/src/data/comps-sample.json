@@ -1,0 +1,90 @@
+[
+  {
+    "id": "comp-1",
+    "address": "123 Oak Street",
+    "salePrice": 425000,
+    "saleDate": "2024-11-15",
+    "distanceMiles": 0.3,
+    "monthsSinceSale": 2,
+    "gla": 1850,
+    "quality": 4,
+    "condition": 4
+  },
+  {
+    "id": "comp-2", 
+    "address": "456 Maple Avenue",
+    "salePrice": 445000,
+    "saleDate": "2024-10-22",
+    "distanceMiles": 0.7,
+    "monthsSinceSale": 3,
+    "gla": 1920,
+    "quality": 4,
+    "condition": 3
+  },
+  {
+    "id": "comp-3",
+    "address": "789 Pine Road",
+    "salePrice": 398000,
+    "saleDate": "2024-09-08",
+    "distanceMiles": 0.2,
+    "monthsSinceSale": 4,
+    "gla": 1780,
+    "quality": 3,
+    "condition": 4
+  },
+  {
+    "id": "comp-4",
+    "address": "321 Elm Drive",
+    "salePrice": 472000,
+    "saleDate": "2024-12-01",
+    "distanceMiles": 1.1,
+    "monthsSinceSale": 1,
+    "gla": 2100,
+    "quality": 5,
+    "condition": 4
+  },
+  {
+    "id": "comp-5",
+    "address": "654 Cedar Lane",
+    "salePrice": 415000,
+    "saleDate": "2024-08-14",
+    "distanceMiles": 0.4,
+    "monthsSinceSale": 5,
+    "gla": 1895,
+    "quality": 4,
+    "condition": 3
+  },
+  {
+    "id": "comp-6",
+    "address": "987 Birch Court",
+    "salePrice": 458000,
+    "saleDate": "2024-11-28",
+    "distanceMiles": 0.8,
+    "monthsSinceSale": 1,
+    "gla": 1975,
+    "quality": 5,
+    "condition": 5
+  },
+  {
+    "id": "comp-7",
+    "address": "159 Willow Way",
+    "salePrice": 385000,
+    "saleDate": "2024-07-19",
+    "distanceMiles": 1.5,
+    "monthsSinceSale": 6,
+    "gla": 1720,
+    "quality": 3,
+    "condition": 3
+  },
+  {
+    "id": "comp-8",
+    "address": "753 Aspen Circle",
+    "salePrice": 465000,
+    "saleDate": "2024-10-05",
+    "distanceMiles": 0.6,
+    "monthsSinceSale": 3,
+    "gla": 2050,
+    "quality": 4,
+    "condition": 4
+  }
+]

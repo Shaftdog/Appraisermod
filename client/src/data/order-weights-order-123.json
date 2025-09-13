@@ -1,0 +1,17 @@
+{
+  "orderId": "order-123",
+  "activeProfileId": "shop-default-profile",
+  "weights": {
+    "distance": 8,
+    "recency": 8,
+    "gla": 7,
+    "quality": 6,
+    "condition": 6
+  },
+  "constraints": {
+    "glaTolerancePct": 10,
+    "distanceCapMiles": 0.5
+  },
+  "updatedAt": "2025-01-01T00:00:00.000Z",
+  "updatedBy": "John Appraiser"
+}

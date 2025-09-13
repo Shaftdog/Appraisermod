@@ -141,3 +141,60 @@ export interface OrderData {
   overallStatus: RiskStatus;
   tabs: Record<TabKey, TabState>;
 }
+
+// Weights & Presets Types
+export type WeightKey = 'distance' | 'recency' | 'gla' | 'quality' | 'condition';
+
+export interface WeightSet {
+  distance: number;   // 0..10
+  recency: number;    // 0..10
+  gla: number;        // 0..10
+  quality: number;    // 0..10
+  condition: number;  // 0..10
+}
+
+export interface ConstraintSet {
+  glaTolerancePct: number;   // e.g., 5..20
+  distanceCapMiles: number;  // e.g., 0.25..5.0
+}
+
+export interface WeightProfile {
+  id: string;          // uuid
+  name: string;        // "Recency First"
+  description?: string;
+  weights: WeightSet;
+  constraints: ConstraintSet;
+  scope: 'shop' | 'user'; // shop = read-only
+  createdAt: string;
+  updatedAt: string;
+  author?: string;     // user display name for user profiles
+}
+
+export interface OrderWeights {
+  orderId: string;
+  activeProfileId?: string; // if derived from a saved profile
+  weights: WeightSet;
+  constraints: ConstraintSet;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface CompProperty {
+  id: string;
+  address: string;
+  salePrice: number;
+  saleDate: string;
+  distanceMiles: number;
+  monthsSinceSale: number;
+  gla: number; // Gross Living Area sq ft
+  quality: number; // 1-5 rating
+  condition: number; // 1-5 rating
+  score?: number; // calculated score
+  scoreBreakdown?: {
+    distance: number;
+    recency: number;
+    gla: number;
+    quality: number;
+    condition: number;
+  };
+}

@@ -2,8 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema } from "@shared/schema";
+import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty } from "@shared/schema";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
+import { validateWeights, validateConstraints } from "../shared/scoring";
 import "./types"; // Import session type extensions
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -74,6 +75,183 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(order);
     } catch (error) {
       res.status(500).json({ message: error instanceof Error ? error.message : "Internal server error" });
+    }
+  });
+
+  // Weights & Presets API Routes
+
+  // Get shop default weights profile
+  app.get("/api/weights/shop-default", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const shopDefault = await storage.getShopDefaultProfile();
+      res.json(shopDefault);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get user weight profiles
+  app.get("/api/weights/profiles", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const profiles = await storage.getUserProfiles();
+      res.json(profiles);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Create new user weight profile
+  app.post("/api/weights/profiles", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { name, description, weights, constraints } = req.body;
+      
+      // Validate weights and constraints
+      const weightErrors = validateWeights(weights);
+      const constraintErrors = validateConstraints(constraints);
+      
+      if (weightErrors.length > 0 || constraintErrors.length > 0) {
+        return res.status(400).json({ 
+          message: "Validation error", 
+          errors: [...weightErrors, ...constraintErrors] 
+        });
+      }
+
+      const newProfile = await storage.createUserProfile({
+        name,
+        description,
+        weights,
+        constraints,
+        scope: 'user',
+        author: req.user!.fullName
+      });
+      
+      res.status(201).json(newProfile);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Profile name already exists') {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update user weight profile
+  app.put("/api/weights/profiles/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { name, description, weights, constraints } = req.body;
+      const profileId = req.params.id;
+      
+      // Validate weights and constraints
+      const weightErrors = validateWeights(weights);
+      const constraintErrors = validateConstraints(constraints);
+      
+      if (weightErrors.length > 0 || constraintErrors.length > 0) {
+        return res.status(400).json({ 
+          message: "Validation error", 
+          errors: [...weightErrors, ...constraintErrors] 
+        });
+      }
+
+      const updatedProfile = await storage.updateUserProfile(profileId, {
+        name,
+        description,
+        weights,
+        constraints
+      });
+      
+      res.json(updatedProfile);
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === 'Profile not found') {
+          return res.status(404).json({ message: error.message });
+        }
+        if (error.message === 'Cannot modify shop default profiles' || error.message === 'Profile name already exists') {
+          return res.status(400).json({ message: error.message });
+        }
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete user weight profile
+  app.delete("/api/weights/profiles/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const profileId = req.params.id;
+      await storage.deleteUserProfile(profileId);
+      res.json({ message: "Profile deleted successfully" });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === 'Profile not found') {
+          return res.status(404).json({ message: error.message });
+        }
+        if (error.message === 'Cannot delete shop default profiles') {
+          return res.status(403).json({ message: error.message });
+        }
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get order weights
+  app.get("/api/orders/:id/weights", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const orderWeights = await storage.getOrderWeights(orderId);
+      res.json(orderWeights);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update order weights
+  app.put("/api/orders/:id/weights", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const { weights, constraints, activeProfileId } = req.body;
+      
+      // Validate weights and constraints
+      const weightErrors = validateWeights(weights);
+      const constraintErrors = validateConstraints(constraints);
+      
+      if (weightErrors.length > 0 || constraintErrors.length > 0) {
+        return res.status(400).json({ 
+          message: "Validation error", 
+          errors: [...weightErrors, ...constraintErrors] 
+        });
+      }
+
+      const orderWeights = await storage.updateOrderWeights(
+        orderId, 
+        weights, 
+        constraints, 
+        activeProfileId, 
+        req.user!.fullName
+      );
+      
+      res.json(orderWeights);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Reset order weights to shop defaults
+  app.post("/api/orders/:id/weights/reset", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const orderWeights = await storage.resetOrderWeights(orderId, req.user!.fullName);
+      res.json(orderWeights);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get scored and ranked comps for an order
+  app.get("/api/orders/:id/comps", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const result = await storage.getCompsWithScoring(orderId);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
