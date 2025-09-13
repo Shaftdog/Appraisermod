@@ -12,11 +12,12 @@ import { MarketMap } from "../map/MarketMap";
 import { SwapDialog } from "./SwapDialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { CompProperty, Subject, MarketPolygon, CompSelection } from "@shared/schema";
+import type { CompProperty, Subject, MarketPolygon, CompSelection, TimeAdjustments } from "@shared/schema";
 
 interface CompListProps {
   orderId: string;
   refreshTrigger?: number; // Optional prop to force refresh
+  timeAdjustments?: TimeAdjustments; // Time-based market adjustments
 }
 
 interface CompsResponse {
@@ -36,7 +37,7 @@ interface SelectionResponse {
   selection: CompSelection;
 }
 
-export function CompList({ orderId, refreshTrigger }: CompListProps) {
+export function CompList({ orderId, refreshTrigger, timeAdjustments }: CompListProps) {
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [showSwapDialog, setShowSwapDialog] = useState(false);
   const [swapCandidate, setSwapCandidate] = useState<string | null>(null);
@@ -215,6 +216,7 @@ export function CompList({ orderId, refreshTrigger }: CompListProps) {
       <PrimaryCompTray
         primaryComps={primaryComps}
         selection={selection}
+        timeAdjustments={timeAdjustments}
         onLock={handleLock}
         onSwap={handleSwap}
         onViewOnMap={handleViewOnMap}
@@ -292,6 +294,7 @@ export function CompList({ orderId, refreshTrigger }: CompListProps) {
                     comp={comp}
                     showPromote={true}
                     showSwap={true}
+                    timeAdjustments={timeAdjustments}
                     onLock={handleLock}
                     onPromote={handlePromote}
                     onSwap={handleSwap}
@@ -329,6 +332,7 @@ export function CompList({ orderId, refreshTrigger }: CompListProps) {
                     comp={comp}
                     showPromote={true}
                     showSwap={true}
+                    timeAdjustments={timeAdjustments}
                     onLock={handleLock}
                     onPromote={handlePromote}
                     onSwap={handleSwap}

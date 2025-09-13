@@ -10,6 +10,7 @@ import { CompList } from '@/components/comps/CompList';
 import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
+import { TimeAdjustments } from '@shared/schema';
 
 export default function Comps() {
   const params = useParams<{ orderId: string }>();
@@ -21,6 +22,12 @@ export default function Comps() {
 
   const { data: order } = useQuery<Order>({
     queryKey: ['/api/orders', orderId],
+    enabled: !!orderId
+  });
+
+  // Fetch time adjustments from market analysis
+  const { data: timeAdjustments } = useQuery<TimeAdjustments>({
+    queryKey: ['/api/orders', orderId, 'market', 'time-adjustments'],
     enabled: !!orderId
   });
 
@@ -122,6 +129,7 @@ export default function Comps() {
       <CompList 
         orderId={orderId!} 
         refreshTrigger={refreshTrigger}
+        timeAdjustments={timeAdjustments}
       />
 
       {showVersions && (

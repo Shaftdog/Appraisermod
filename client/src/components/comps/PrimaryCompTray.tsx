@@ -3,12 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CompCard } from "./CompCard";
-import { CompProperty, CompSelection } from "@shared/schema";
+import { CompProperty, CompSelection, TimeAdjustments } from "@shared/schema";
 import { cn } from "@/lib/utils";
 
 interface PrimaryCompTrayProps {
   primaryComps: (CompProperty | null)[];
   selection: CompSelection;
+  timeAdjustments?: TimeAdjustments;
   className?: string;
   onLock?: (compId: string, locked: boolean) => void;
   onSwap?: (compId: string) => void;
@@ -60,6 +61,7 @@ function EmptySlot({ index, onFillSlot }: EmptySlotProps) {
 export function PrimaryCompTray({
   primaryComps,
   selection,
+  timeAdjustments,
   className,
   onLock,
   onSwap,
@@ -103,6 +105,7 @@ export function PrimaryCompTray({
                   isPrimary={true}
                   primaryIndex={slotIndex}
                   showSwap={true}
+                  timeAdjustments={timeAdjustments}
                   onLock={onLock}
                   onSwap={onSwap}
                   onViewOnMap={onViewOnMap}

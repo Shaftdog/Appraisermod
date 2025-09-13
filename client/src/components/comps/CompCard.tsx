@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScoreBar } from "./ScoreBar";
 import { ScoreBreakdown } from "./ScoreBreakdown";
-import { CompProperty, ScoreBand } from "@shared/schema";
+import { CompProperty, ScoreBand, TimeAdjustments } from "@shared/schema";
 import { cn } from "@/lib/utils";
 
 interface CompCardProps {
@@ -16,6 +16,7 @@ interface CompCardProps {
   primaryIndex?: 0 | 1 | 2;
   showPromote?: boolean;
   showSwap?: boolean;
+  timeAdjustments?: TimeAdjustments;
   className?: string;
   onLock?: (compId: string, locked: boolean) => void;
   onPromote?: (compId: string) => void;
@@ -29,6 +30,7 @@ export function CompCard({
   primaryIndex,
   showPromote = false,
   showSwap = false,
+  timeAdjustments,
   className,
   onLock,
   onPromote,
@@ -45,6 +47,28 @@ export function CompCard({
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(comp.salePrice);
+
+  // Calculate time adjustment
+  const calculateTimeAdjustment = () => {
+    if (!timeAdjustments) return null;
+    
+    const monthsOld = Math.round((Date.now() - saleDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+    const adjustment = monthsOld * timeAdjustments.pctPerMonth;
+    const adjustedPrice = comp.salePrice * (1 + adjustment);
+    
+    return {
+      monthsOld,
+      adjustmentPercent: adjustment * 100,
+      adjustedPrice,
+      formattedAdjustedPrice: new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      }).format(adjustedPrice)
+    };
+  };
+
+  const timeAdjustment = calculateTimeAdjustment();
 
   // Determine score band if not provided
   const scoreBand: ScoreBand = comp.band || 
@@ -118,9 +142,21 @@ export function CompCard({
             </h3>
             
             <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400 mt-1">
-              <span className="font-semibold text-green-600 dark:text-green-400">
-                {formattedPrice}
-              </span>
+              <div className="flex flex-col">
+                <span className="font-semibold text-green-600 dark:text-green-400">
+                  {formattedPrice}
+                </span>
+                {timeAdjustment && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-blue-600 dark:text-blue-400 font-medium">
+                      {timeAdjustment.formattedAdjustedPrice}
+                    </span>
+                    <Badge variant="outline" className="text-xs px-1 py-0">
+                      {timeAdjustment.adjustmentPercent > 0 ? '+' : ''}{timeAdjustment.adjustmentPercent.toFixed(1)}%
+                    </Badge>
+                  </div>
+                )}
+              </div>
               <span>{formattedDate}</span>
               <span>{comp.distanceMiles.toFixed(1)} mi</span>
               <span>{comp.monthsSinceSale}mo ago</span>
