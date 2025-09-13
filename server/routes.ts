@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty } from "@shared/schema";
+import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema } from "@shared/schema";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
 import "./types"; // Import session type extensions
@@ -250,6 +250,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orderId = req.params.id;
       const result = await storage.getCompsWithScoring(orderId);
       res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Map & Comp Selection Routes
+
+  // Get subject property
+  app.get("/api/orders/:id/subject", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const subject = await storage.getSubject(orderId);
+      res.json(subject);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get market polygon
+  app.get("/api/orders/:id/market/polygon", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const polygon = await storage.getMarketPolygon(orderId);
+      res.json(polygon);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Save market polygon
+  app.put("/api/orders/:id/market/polygon", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const { polygon } = req.body;
+      
+      // Validate polygon data
+      const validationResult = marketPolygonSchema.safeParse(polygon);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid polygon data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const savedPolygon = await storage.saveMarketPolygon(orderId, validationResult.data);
+      res.json(savedPolygon);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete market polygon
+  app.delete("/api/orders/:id/market/polygon", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      await storage.deleteMarketPolygon(orderId);
+      res.json({ message: "Polygon deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get comp selection state
+  app.get("/api/orders/:id/comps/selection", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const selection = await storage.getCompSelection(orderId);
+      res.json(selection);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update comp selection state
+  app.put("/api/orders/:id/comps/selection", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Validate request body
+      const validationResult = compSelectionUpdateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid selection data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const updatedSelection = await storage.updateCompSelection(orderId, validationResult.data);
+      res.json(updatedSelection);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Lock/unlock a comp
+  app.post("/api/orders/:id/comps/lock", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Validate request body
+      const validationResult = compLockSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid lock data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const { compId, locked } = validationResult.data;
+      const updatedSelection = await storage.lockComp(orderId, compId, locked);
+      res.json(updatedSelection);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Swap comp positions
+  app.post("/api/orders/:id/comps/swap", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Validate request body
+      const validationResult = compSwapSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid swap data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const { candidateId, targetIndex, confirm } = validationResult.data;
+
+      try {
+        const updatedSelection = await storage.swapComp(orderId, candidateId, targetIndex);
+        res.json(updatedSelection);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('locked comp')) {
+          if (!confirm) {
+            return res.status(409).json({ 
+              message: error.message,
+              requiresConfirmation: true 
+            });
+          }
+          // Force the swap if confirmation provided
+          // TODO: Implement force swap logic
+          return res.status(400).json({ message: "Force swap not implemented yet" });
+        }
+        throw error;
+      }
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
     }

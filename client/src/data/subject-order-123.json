@@ -1,0 +1,8 @@
+{
+  "id": "subject-123",
+  "address": "1234 Oak Street, Austin, TX 78701",
+  "latlng": { "lat": 30.2730, "lng": -97.7431 },
+  "gla": 2450,
+  "quality": 4,
+  "condition": 4
+}

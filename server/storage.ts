@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty } from "@shared/schema";
+import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection } from "@shared/schema";
 import { users, orders, versions } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -34,6 +34,16 @@ export interface IStorage {
   updateOrderWeights(orderId: string, weights: WeightSet, constraints: ConstraintSet, activeProfileId?: string, updatedBy?: string): Promise<OrderWeights>;
   resetOrderWeights(orderId: string, updatedBy?: string): Promise<OrderWeights>;
   getCompsWithScoring(orderId: string): Promise<{ comps: CompProperty[]; weights: OrderWeights }>;
+
+  // Map & Comp Selection methods
+  getSubject(orderId: string): Promise<Subject>;
+  getMarketPolygon(orderId: string): Promise<MarketPolygon | null>;
+  saveMarketPolygon(orderId: string, polygon: MarketPolygon): Promise<MarketPolygon>;
+  deleteMarketPolygon(orderId: string): Promise<void>;
+  getCompSelection(orderId: string): Promise<CompSelection>;
+  updateCompSelection(orderId: string, updates: Partial<CompSelection>): Promise<CompSelection>;
+  lockComp(orderId: string, compId: string, locked: boolean): Promise<CompSelection>;
+  swapComp(orderId: string, candidateId: string, targetIndex: 0 | 1 | 2): Promise<CompSelection>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -334,6 +344,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-11-15",
       distanceMiles: 0.3,
       monthsSinceSale: 2,
+      latlng: { lat: 30.2741, lng: -97.7443 },
       gla: 1850,
       quality: 4,
       condition: 4
@@ -345,6 +356,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-10-22",
       distanceMiles: 0.7,
       monthsSinceSale: 3,
+      latlng: { lat: 30.2689, lng: -97.7502 },
       gla: 1920,
       quality: 4,
       condition: 3
@@ -356,6 +368,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-09-08",
       distanceMiles: 0.2,
       monthsSinceSale: 4,
+      latlng: { lat: 30.2755, lng: -97.7411 },
       gla: 1780,
       quality: 3,
       condition: 4
@@ -367,6 +380,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-12-01",
       distanceMiles: 1.1,
       monthsSinceSale: 1,
+      latlng: { lat: 30.2612, lng: -97.7632 },
       gla: 2100,
       quality: 5,
       condition: 4
@@ -378,6 +392,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-08-14",
       distanceMiles: 0.4,
       monthsSinceSale: 5,
+      latlng: { lat: 30.2798, lng: -97.7385 },
       gla: 1895,
       quality: 4,
       condition: 3
@@ -389,6 +404,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-11-28",
       distanceMiles: 0.8,
       monthsSinceSale: 1,
+      latlng: { lat: 30.2653, lng: -97.7576 },
       gla: 1975,
       quality: 5,
       condition: 5
@@ -400,6 +416,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-07-19",
       distanceMiles: 1.5,
       monthsSinceSale: 6,
+      latlng: { lat: 30.2512, lng: -97.7721 },
       gla: 1720,
       quality: 3,
       condition: 3
@@ -411,6 +428,7 @@ export class DatabaseStorage implements IStorage {
       saleDate: "2024-10-05",
       distanceMiles: 0.6,
       monthsSinceSale: 3,
+      latlng: { lat: 30.2824, lng: -97.7456 },
       gla: 2050,
       quality: 4,
       condition: 4
@@ -513,15 +531,141 @@ export class DatabaseStorage implements IStorage {
 
   async getCompsWithScoring(orderId: string): Promise<{ comps: CompProperty[]; weights: OrderWeights }> {
     const weights = await this.getOrderWeights(orderId);
+    const polygon = await this.getMarketPolygon(orderId);
+    const selection = await this.getCompSelection(orderId);
     
-    // Import scoring function
+    // Import scoring function and geo utilities
     const { scoreAndRankComps } = await import("../shared/scoring");
-    const rankedComps = scoreAndRankComps(this.sampleComps, weights.weights, weights.constraints);
+    const { isInsidePolygon } = await import("../shared/geo");
+    
+    let compsWithLocation = [...this.sampleComps];
+    
+    // Add polygon and selection data to each comp
+    compsWithLocation = compsWithLocation.map(comp => ({
+      ...comp,
+      isInsidePolygon: polygon ? isInsidePolygon(comp.latlng, polygon) : true,
+      locked: selection.locked.includes(comp.id),
+      isPrimary: selection.primary.includes(comp.id),
+      primaryIndex: selection.primary.indexOf(comp.id) as 0 | 1 | 2 | -1
+    })).map(comp => ({
+      ...comp,
+      primaryIndex: comp.primaryIndex === -1 ? undefined : comp.primaryIndex as 0 | 1 | 2
+    }));
+    
+    // Filter by polygon if restriction is enabled
+    if (selection.restrictToPolygon && polygon) {
+      // Keep all primary comps regardless of polygon, but mark as outside if needed
+      compsWithLocation = compsWithLocation.filter(comp => 
+        comp.isPrimary || comp.isInsidePolygon
+      );
+    }
+    
+    const rankedComps = scoreAndRankComps(compsWithLocation, weights.weights, weights.constraints);
     
     return {
       comps: rankedComps,
       weights
     };
+  }
+
+  // Map & Comp Selection method implementations
+  private subjectData: Subject = {
+    id: "subject-123",
+    address: "1234 Oak Street, Austin, TX 78701",
+    latlng: { lat: 30.2730, lng: -97.7431 },
+    gla: 2450,
+    quality: 4,
+    condition: 4
+  };
+
+  private marketPolygons: Map<string, MarketPolygon | null> = new Map();
+  private compSelections: Map<string, CompSelection> = new Map();
+
+  async getSubject(orderId: string): Promise<Subject> {
+    return this.subjectData;
+  }
+
+  async getMarketPolygon(orderId: string): Promise<MarketPolygon | null> {
+    return this.marketPolygons.get(orderId) || null;
+  }
+
+  async saveMarketPolygon(orderId: string, polygon: MarketPolygon): Promise<MarketPolygon> {
+    this.marketPolygons.set(orderId, polygon);
+    return polygon;
+  }
+
+  async deleteMarketPolygon(orderId: string): Promise<void> {
+    this.marketPolygons.set(orderId, null);
+  }
+
+  async getCompSelection(orderId: string): Promise<CompSelection> {
+    const existing = this.compSelections.get(orderId);
+    if (existing) {
+      return existing;
+    }
+
+    // Return default selection
+    const defaultSelection: CompSelection = {
+      orderId,
+      primary: ["comp-4", "comp-6", "comp-1"], // Default primary comps
+      locked: ["comp-6"], // One locked by default
+      restrictToPolygon: false
+    };
+
+    this.compSelections.set(orderId, defaultSelection);
+    return defaultSelection;
+  }
+
+  async updateCompSelection(orderId: string, updates: Partial<CompSelection>): Promise<CompSelection> {
+    const existing = await this.getCompSelection(orderId);
+    const updated = { ...existing, ...updates };
+    this.compSelections.set(orderId, updated);
+    return updated;
+  }
+
+  async lockComp(orderId: string, compId: string, locked: boolean): Promise<CompSelection> {
+    const selection = await this.getCompSelection(orderId);
+    
+    if (locked) {
+      if (!selection.locked.includes(compId)) {
+        selection.locked.push(compId);
+      }
+    } else {
+      selection.locked = selection.locked.filter(id => id !== compId);
+    }
+    
+    this.compSelections.set(orderId, selection);
+    return selection;
+  }
+
+  async swapComp(orderId: string, candidateId: string, targetIndex: 0 | 1 | 2): Promise<CompSelection> {
+    const selection = await this.getCompSelection(orderId);
+    
+    // Get the current comp at target position
+    const currentCompId = selection.primary[targetIndex];
+    
+    // Check if the current comp is locked (require confirmation in API layer)
+    if (currentCompId && selection.locked.includes(currentCompId)) {
+      throw new Error(`Cannot replace locked comp at position ${targetIndex + 1}. Confirmation required.`);
+    }
+    
+    // Remove candidate from current primary positions if it exists
+    const candidateCurrentIndex = selection.primary.indexOf(candidateId);
+    if (candidateCurrentIndex !== -1) {
+      selection.primary[candidateCurrentIndex] = '';
+    }
+    
+    // Set the new comp at target position
+    selection.primary[targetIndex] = candidateId;
+    
+    // Clean up empty slots by shifting
+    selection.primary = selection.primary.filter(id => id !== '');
+    while (selection.primary.length < 3) {
+      selection.primary.push('');
+    }
+    
+    this.compSelections.set(orderId, selection);
+    return selection;
   }
 }
 

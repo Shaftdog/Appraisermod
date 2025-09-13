@@ -179,6 +179,32 @@ export interface OrderWeights {
   updatedBy: string;
 }
 
+// Map & Geo Types
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
+export type ScoreBand = 'high' | 'medium' | 'low';
+
+export interface MarketPolygon {
+  type: 'Feature';
+  geometry: {
+    type: 'Polygon';
+    coordinates: number[][][];
+  };
+  properties?: Record<string, any>;
+}
+
+export interface Subject {
+  id: string;
+  address: string;
+  latlng: LatLng;
+  gla: number; // Gross Living Area sq ft
+  quality: number; // 1-5 rating
+  condition: number; // 1-5 rating
+}
+
 export interface CompProperty {
   id: string;
   address: string;
@@ -186,15 +212,63 @@ export interface CompProperty {
   saleDate: string;
   distanceMiles: number;
   monthsSinceSale: number;
+  latlng: LatLng;
   gla: number; // Gross Living Area sq ft
   quality: number; // 1-5 rating
   condition: number; // 1-5 rating
-  score?: number; // calculated score
+  locked?: boolean;
+  isPrimary?: boolean;
+  primaryIndex?: 0 | 1 | 2;
+  score?: number; // calculated score 0-1
+  band?: ScoreBand;
+  isInsidePolygon?: boolean;
   scoreBreakdown?: {
-    distance: number;
-    recency: number;
-    gla: number;
-    quality: number;
-    condition: number;
+    distance: { similarity: number; weight: number; contribution: number; };
+    recency: { similarity: number; weight: number; contribution: number; };
+    gla: { similarity: number; weight: number; contribution: number; };
+    quality: { similarity: number; weight: number; contribution: number; };
+    condition: { similarity: number; weight: number; contribution: number; };
   };
 }
+
+// Comp Selection & Primary Tray Management
+export interface CompSelection {
+  orderId: string;
+  primary: string[]; // comp IDs for positions #1, #2, #3
+  locked: string[]; // comp IDs that are locked
+  restrictToPolygon: boolean;
+}
+
+// Zod Schemas for Validation
+export const latLngSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180)
+});
+
+export const scoreBandSchema = z.enum(['high', 'medium', 'low']);
+
+export const marketPolygonSchema = z.object({
+  type: z.literal('Feature'),
+  geometry: z.object({
+    type: z.literal('Polygon'),
+    coordinates: z.array(z.array(z.array(z.number()).length(2)))
+  }),
+  properties: z.record(z.any()).optional()
+});
+
+export const compSelectionUpdateSchema = z.object({
+  primary: z.array(z.string()).max(3).optional(),
+  locked: z.array(z.string()).optional(),
+  restrictToPolygon: z.boolean().optional()
+});
+
+export const compLockSchema = z.object({
+  compId: z.string().min(1),
+  locked: z.boolean()
+});
+
+export const compSwapSchema = z.object({
+  candidateId: z.string().min(1),
+  targetIndex: z.number().int().min(0).max(2),
+  confirm: z.boolean().optional()
+});

@@ -6,6 +6,7 @@
     "saleDate": "2024-11-15",
     "distanceMiles": 0.3,
     "monthsSinceSale": 2,
+    "latlng": { "lat": 30.2741, "lng": -97.7443 },
     "gla": 1850,
     "quality": 4,
     "condition": 4
@@ -17,6 +18,7 @@
     "saleDate": "2024-10-22",
     "distanceMiles": 0.7,
     "monthsSinceSale": 3,
+    "latlng": { "lat": 30.2689, "lng": -97.7502 },
     "gla": 1920,
     "quality": 4,
     "condition": 3
@@ -28,6 +30,7 @@
     "saleDate": "2024-09-08",
     "distanceMiles": 0.2,
     "monthsSinceSale": 4,
+    "latlng": { "lat": 30.2755, "lng": -97.7411 },
     "gla": 1780,
     "quality": 3,
     "condition": 4
@@ -39,6 +42,7 @@
     "saleDate": "2024-12-01",
     "distanceMiles": 1.1,
     "monthsSinceSale": 1,
+    "latlng": { "lat": 30.2612, "lng": -97.7632 },
     "gla": 2100,
     "quality": 5,
     "condition": 4
@@ -50,6 +54,7 @@
     "saleDate": "2024-08-14",
     "distanceMiles": 0.4,
     "monthsSinceSale": 5,
+    "latlng": { "lat": 30.2798, "lng": -97.7385 },
     "gla": 1895,
     "quality": 4,
     "condition": 3
@@ -61,6 +66,7 @@
     "saleDate": "2024-11-28",
     "distanceMiles": 0.8,
     "monthsSinceSale": 1,
+    "latlng": { "lat": 30.2653, "lng": -97.7576 },
     "gla": 1975,
     "quality": 5,
     "condition": 5
@@ -72,6 +78,7 @@
     "saleDate": "2024-07-19",
     "distanceMiles": 1.5,
     "monthsSinceSale": 6,
+    "latlng": { "lat": 30.2512, "lng": -97.7721 },
     "gla": 1720,
     "quality": 3,
     "condition": 3
@@ -83,7 +90,56 @@
     "saleDate": "2024-10-05",
     "distanceMiles": 0.6,
     "monthsSinceSale": 3,
+    "latlng": { "lat": 30.2824, "lng": -97.7456 },
     "gla": 2050,
+    "quality": 4,
+    "condition": 4
+  },
+  {
+    "id": "comp-9",
+    "address": "555 Magnolia Street",
+    "salePrice": 492000,
+    "saleDate": "2024-11-03",
+    "distanceMiles": 0.9,
+    "monthsSinceSale": 2,
+    "latlng": { "lat": 30.2595, "lng": -97.7589 },
+    "gla": 2180,
+    "quality": 5,
+    "condition": 4
+  },
+  {
+    "id": "comp-10",
+    "address": "432 Sycamore Drive",
+    "salePrice": 378000,
+    "saleDate": "2024-09-22",
+    "distanceMiles": 1.3,
+    "monthsSinceSale": 4,
+    "latlng": { "lat": 30.2478, "lng": -97.7695 },
+    "gla": 1680,
+    "quality": 3,
+    "condition": 3
+  },
+  {
+    "id": "comp-11",
+    "address": "876 Dogwood Lane",
+    "salePrice": 435000,
+    "saleDate": "2024-12-10",
+    "distanceMiles": 0.5,
+    "monthsSinceSale": 1,
+    "latlng": { "lat": 30.2778, "lng": -97.7421 },
+    "gla": 1940,
+    "quality": 4,
+    "condition": 4
+  },
+  {
+    "id": "comp-12",
+    "address": "220 Hickory Avenue",
+    "salePrice": 465000,
+    "saleDate": "2024-10-18",
+    "distanceMiles": 0.7,
+    "monthsSinceSale": 3,
+    "latlng": { "lat": 30.2715, "lng": -97.7518 },
+    "gla": 2025,
     "quality": 4,
     "condition": 4
   }

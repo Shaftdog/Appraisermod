@@ -1,0 +1,6 @@
+{
+  "orderId": "order-123",
+  "primary": ["comp-4", "comp-6", "comp-1"],
+  "locked": ["comp-6"],
+  "restrictToPolygon": false
+}
