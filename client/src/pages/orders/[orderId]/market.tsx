@@ -14,9 +14,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock, Calendar } from 'lucide-react';
 import { MarketSettings, MarketRecord, McrMetrics, TimeAdjustments } from '@shared/schema';
 import { computeMonthlyMedians, computeMarketMetrics } from '@/lib/market/stats';
 
@@ -25,6 +28,7 @@ export default function Market() {
   const orderId = params?.orderId;
   const [showVersions, setShowVersions] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'mcr' | 'records' | 'adjustments'>('overview');
+  const [currentSettings, setCurrentSettings] = useState<Partial<MarketSettings>>({});
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -114,6 +118,37 @@ export default function Market() {
     onError: (error) => {
       toast({
         title: "MCR analysis failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Save time adjustments mutation
+  const saveTimeAdjustmentMutation = useMutation({
+    mutationFn: async () => {
+      if (mcrMetrics == null || mcrMetrics.trendPctPerMonth == null) throw new Error('No MCR analysis available');
+      
+      const effectiveDate = currentSettings.effectiveDateISO || marketSettings?.effectiveDateISO || order?.dueDate || new Date().toISOString();
+      const basis = currentSettings.metric || marketSettings?.metric || 'salePrice';
+      
+      const response = await apiRequest('PUT', `/api/orders/${orderId}/market/time-adjustments`, {
+        pctPerMonth: mcrMetrics.trendPctPerMonth,
+        basis,
+        effectiveDateISO: effectiveDate
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/orders', orderId, 'market', 'time-adjustments'] });
+      toast({
+        title: "Time adjustment saved",
+        description: `Applied ${((mcrMetrics?.trendPctPerMonth || 0) * 100).toFixed(2)}%/mo on ${currentSettings.metric || marketSettings?.metric || 'salePrice'} basis.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Save failed",
         description: error.message,
         variant: "destructive",
       });
@@ -385,7 +420,7 @@ export default function Market() {
                       Seed Data
                     </Button>
                     <Button
-                      onClick={() => computeMcrMutation.mutate(marketSettings)}
+                      onClick={() => computeMcrMutation.mutate({...marketSettings, ...currentSettings})}
                       disabled={computeMcrMutation.isPending || !marketRecords?.length}
                       size="sm"
                       data-testid="button-compute-mcr"
@@ -393,6 +428,65 @@ export default function Market() {
                       <BarChart3 className="h-4 w-4" />
                       Compute MCR
                     </Button>
+                  </div>
+                </div>
+                
+                {/* Analysis Settings */}
+                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="effective-date" className="text-sm font-medium">
+                        Effective Date
+                      </Label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-gray-500" />
+                        <Input
+                          id="effective-date"
+                          type="date"
+                          className="pl-10"
+                          value={currentSettings.effectiveDateISO || (marketSettings?.effectiveDateISO ? marketSettings.effectiveDateISO.split('T')[0] : new Date().toISOString().split('T')[0])}
+                          onChange={(e) => setCurrentSettings(prev => ({...prev, effectiveDateISO: e.target.value + 'T00:00:00.000Z'}))}
+                          data-testid="input-effective-date"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="metric-basis" className="text-sm font-medium">
+                        Analysis Basis
+                      </Label>
+                      <Select
+                        value={currentSettings.metric || marketSettings?.metric || 'salePrice'}
+                        onValueChange={(value: 'salePrice' | 'ppsf') => setCurrentSettings(prev => ({...prev, metric: value}))}
+                      >
+                        <SelectTrigger data-testid="select-metric-basis">
+                          <SelectValue placeholder="Select basis" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="salePrice">Sale Price</SelectItem>
+                          <SelectItem value="ppsf">$/SF</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="months-back" className="text-sm font-medium">
+                        Months Back
+                      </Label>
+                      <Select
+                        value={String(currentSettings.monthsBack || marketSettings?.monthsBack || 12)}
+                        onValueChange={(value) => setCurrentSettings(prev => ({...prev, monthsBack: Number(value) as 12 | 18 | 24}))}
+                      >
+                        <SelectTrigger data-testid="select-months-back">
+                          <SelectValue placeholder="Select months" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="12">12 months</SelectItem>
+                          <SelectItem value="18">18 months</SelectItem>
+                          <SelectItem value="24">24 months</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
               </CardHeader>
@@ -430,6 +524,31 @@ export default function Market() {
                           <span>{marketRecords?.length || 0}</span>
                         </div>
                       </div>
+                    </div>
+                    
+                    {/* Use Time Adjustment Button */}
+                    <div className="mt-6 pt-4 border-t">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-muted-foreground">
+                          Time adjustments calculated to {currentSettings.effectiveDateISO ? new Date(currentSettings.effectiveDateISO).toLocaleDateString() : 'today'} on {currentSettings.metric || marketSettings?.metric || 'salePrice'} basis.
+                        </div>
+                        <Button
+                          onClick={() => saveTimeAdjustmentMutation.mutate()}
+                          disabled={saveTimeAdjustmentMutation.isPending || mcrMetrics == null || mcrMetrics.trendPctPerMonth == null}
+                          data-testid="button-use-time-adjustment"
+                        >
+                          <Clock className="h-4 w-4 mr-2" />
+                          Use this time adjustment
+                        </Button>
+                      </div>
+                      
+                      {timeAdjustments && (
+                        <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                          <div className="text-sm text-green-800 dark:text-green-200">
+                            ✓ Applied {(timeAdjustments.pctPerMonth * 100).toFixed(2)}%/mo on {timeAdjustments.basis} basis, effective {new Date(timeAdjustments.effectiveDateISO).toLocaleDateString()}.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
