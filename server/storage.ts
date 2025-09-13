@@ -1160,10 +1160,12 @@ export class DatabaseStorage implements IStorage {
 
     // Compute default time adjustments from market metrics
     const metrics = await this.computeMcrMetrics(orderId);
+    const order = await this.getOrder(orderId);
     const defaultAdjustments: TimeAdjustments = {
       orderId,
       basis: 'salePrice',
       pctPerMonth: metrics.trendPctPerMonth,
+      effectiveDateISO: order?.effectiveDate || new Date().toISOString().split('T')[0],
       computedAt: new Date().toISOString()
     };
 
@@ -1396,7 +1398,7 @@ export class DatabaseStorage implements IStorage {
   private computeCostAdjustment(attr: keyof typeof ATTR_METADATA, costBaseline: CostBaseline, subject: any) {
     // Use cost baseline values
     const base = (costBaseline as any)[attr];
-    if (!base) return null;
+    if (!base) return undefined;
     
     let value = base.base || base;
     let lo = value * 0.85;
@@ -1419,7 +1421,7 @@ export class DatabaseStorage implements IStorage {
     // Mock paired sales analysis
     const pairs = comps.filter((_, i) => i < comps.length / 2); // Mock pairing
     
-    if (pairs.length < 2) return null;
+    if (pairs.length < 2) return undefined;
     
     // Mock delta calculation
     const deltas = pairs.map(() => Math.random() * 10000 - 5000);

@@ -132,6 +132,36 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   capPctPerAttr: 15
 };
 
+// Weight normalization utility
+export function normalizeEngineWeights(weights: EngineWeight[]): EngineWeight[] {
+  const requiredEngines: Array<'regression' | 'cost' | 'paired'> = ['regression', 'cost', 'paired'];
+  
+  // Ensure all required engines are present
+  const normalizedWeights: EngineWeight[] = [];
+  
+  for (const engine of requiredEngines) {
+    const existing = weights.find(w => w.engine === engine);
+    normalizedWeights.push({
+      engine,
+      weight: existing ? Math.max(0, Math.min(1, existing.weight)) : 0
+    });
+  }
+  
+  // Calculate sum and normalize to 1
+  const sum = normalizedWeights.reduce((acc, w) => acc + w.weight, 0);
+  
+  if (sum === 0) {
+    // If all weights are 0, use defaults
+    return DEFAULT_ENGINE_SETTINGS.weights;
+  }
+  
+  // Normalize to sum to 1
+  return normalizedWeights.map(w => ({
+    engine: w.engine,
+    weight: w.weight / sum
+  }));
+}
+
 // Attribute metadata
 export const ATTR_METADATA: Record<AttrKey, {
   label: string;

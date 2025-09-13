@@ -2,8 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema } from "@shared/schema";
-import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, DEFAULT_ENGINE_SETTINGS } from "@shared/adjustments";
+import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema, adjustmentRunInputSchema, engineSettingsSchema } from "@shared/schema";
+import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, DEFAULT_ENGINE_SETTINGS, normalizeEngineWeights } from "@shared/adjustments";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
 import multer from "multer";
@@ -1196,7 +1196,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied to this order' });
       }
       
-      const result = await storage.computeAdjustments(orderId, req.body);
+      // Validate request body against schema
+      const validationResult = adjustmentRunInputSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid adjustment run input data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const result = await storage.computeAdjustments(orderId, validationResult.data);
       res.json(result);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
@@ -1230,7 +1239,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied to this order' });
       }
       
-      const settings = await storage.updateAdjustmentSettings(orderId, req.body);
+      // Validate request body against schema
+      const validationResult = engineSettingsSchema.partial().safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid engine settings data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      // Normalize weights if provided
+      const normalizedData = { ...validationResult.data };
+      if (normalizedData.weights) {
+        normalizedData.weights = normalizeEngineWeights(normalizedData.weights);
+      }
+      
+      const settings = await storage.updateAdjustmentSettings(orderId, normalizedData);
       res.json(settings);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });

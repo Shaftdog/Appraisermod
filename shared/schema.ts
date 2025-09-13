@@ -546,3 +546,35 @@ export const bulkPhotoUpdateSchema = z.object({
     captionPrefix: z.string().max(100).optional()
   })
 });
+
+// Adjustments Engine Schemas
+export const engineWeightSchema = z.object({
+  engine: z.enum(['regression', 'cost', 'paired']),
+  weight: z.number().min(0).max(1)
+});
+
+export const engineSettingsSchema = z.object({
+  weights: z.array(engineWeightSchema).min(1),
+  decimalPlaces: z.number().int().min(0).max(4).optional(),
+  capPctPerAttr: z.number().min(0).max(100).optional()
+});
+
+export const subjectPropertySchema = z.object({
+  gla: z.number().positive(),
+  bed: z.number().int().min(0),
+  bath: z.number().min(0),
+  garage: z.number().int().min(0).optional(),
+  lotSize: z.number().positive().optional(),
+  age: z.number().min(0).optional(),
+  quality: z.number().min(1).max(10).optional(),
+  condition: z.number().min(1).max(10).optional(),
+  pool: z.boolean().optional(),
+  view: z.number().min(1).max(10).optional()
+});
+
+export const adjustmentRunInputSchema = z.object({
+  orderId: z.string().min(1),
+  compIds: z.array(z.string().min(1)).min(1),
+  subject: subjectPropertySchema,
+  marketBasis: z.enum(['salePrice', 'ppsf'])
+});
