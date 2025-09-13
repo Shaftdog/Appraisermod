@@ -1,0 +1,235 @@
+Got it. Since Replit built the Photo API (nice!), the next step is to build the frontend that uses those endpoints. Below is a copy‑paste prompt for Replit’s AI that explicitly focuses on UI only—gallery + capture, auto‑blur/redaction tools, and addenda page builder—without creating any new backend routes.
+
+⸻
+
+PROMPT FOR REPLIT
+
+PROJECT TITLE:
+FE: Photos Module (UI‑only) — Photo capture & gallery, auto‑blurring/redaction editor, addenda page builder (PDF export), wired to existing secured Photo API.
+
+SCOPE RULES (IMPORTANT):
+	•	Do NOT create or modify backend API routes.
+	•	Use the existing 13 Photo API endpoints that were just implemented (secure, deny‑by‑default).
+	•	If an endpoint path or auth header differs, put paths/headers in a single config/endpointPaths.ts file so I can tweak them fast. Show me where to edit.
+	•	If an API call fails with 401/403, show a non-blocking banner explaining auth and read the DEV AUTH settings from .env.local (see below).
+
+STACK & CONVENTIONS:
+	•	Next.js 14+ App Router, TypeScript, Tailwind CSS (reuse project config).
+	•	Accessible UI (keyboard + SR), responsive (desktop + mobile).
+	•	Image processing in the browser with Web Worker for blur to keep UI smooth.
+	•	Face detection with @vladmandic/face-api (lazy-load models from /public/models/faceapi/); if models not present, fall back gracefully to manual tools only.
+
+⸻
+
+0) DEV AUTH (frontend only)
+
+Add config/auth.ts and read:
+
+export const DEV_AUTH = {
+  // Adjust to match the server’s expectations:
+  headerName: process.env.NEXT_PUBLIC_AUTH_HEADER_NAME || 'x-user-id',
+  userId: process.env.NEXT_PUBLIC_DEV_USER_ID || 'demo-user',
+};
+
+All Photo API fetches should include this header in dev builds:
+
+{ headers: { [DEV_AUTH.headerName]: DEV_AUTH.userId } }
+
+Add a small auth banner if requests return 401/403:
+
+“You are not authorized. Set NEXT_PUBLIC_AUTH_HEADER_NAME and NEXT_PUBLIC_DEV_USER_ID in .env.local to match the Photo API’s dev auth.”
+
+⸻
+
+1) Endpoints mapping (single source of truth)
+
+Create config/endpointPaths.ts:
+
+export const PhotoAPI = {
+  listPhotos: (orderId: string) => `/api/orders/${orderId}/photos`,
+  uploadPhoto: (orderId: string) => `/api/orders/${orderId}/photos/upload`,
+  updatePhoto: (orderId: string, photoId: string) => `/api/orders/${orderId}/photos/${photoId}`,
+  setMasks:    (orderId: string, photoId: string) => `/api/orders/${orderId}/photos/${photoId}/masks`,
+  processBlur: (orderId: string, photoId: string) => `/api/orders/${orderId}/photos/${photoId}/process`,
+  deletePhoto: (orderId: string, photoId: string) => `/api/orders/${orderId}/photos/${photoId}`,
+
+  addendaGet:   (orderId: string) => `/api/orders/${orderId}/photos/addenda`,
+  addendaPut:   (orderId: string) => `/api/orders/${orderId}/photos/addenda`,
+  addendaExport:(orderId: string) => `/api/orders/${orderId}/photos/addenda/export`,
+
+  qcSummary:    (orderId: string) => `/api/orders/${orderId}/photos/qc`,
+  // If your API exposes download endpoints (original/blurred), add them here too.
+};
+
+Note: If your actual endpoints differ, only edit this file.
+
+⸻
+
+2) Types (frontend models)
+
+Create types/photos.ts (align to backend shapes; safe superset below):
+
+export type PhotoCategory =
+  | 'exteriorFront' | 'exteriorLeft' | 'exteriorRight' | 'exteriorRear'
+  | 'street' | 'addressUnit'
+  | 'kitchen' | 'bath' | 'living' | 'bedroom'
+  | 'mechanical' | 'deficiency' | 'viewWaterfront' | 'outbuilding' | 'other';
+
+export interface PhotoMeta {
+  id: string;
+  orderId: string;
+  originalPath: string;
+  displayPath: string;
+  thumbPath: string;
+  width: number; height: number;
+  exif?: { takenAt?: string; gps?: { lat: number; lng: number }; orientation?: number };
+  category?: PhotoCategory;
+  caption?: string;
+  masks?: {
+    rects: Array<{ x:number; y:number; w:number; h:number; radius?: number }>;
+    brush: Array<{ points: Array<{x:number;y:number}>, radius: number, strength: number }>;
+    autoDetections?: Array<{ type:'face'; x:number; y:number; w:number; h:number; accepted: boolean }>;
+  };
+  processing?: { blurredPath?: string; lastProcessedAt?: string };
+  createdAt: string; updatedAt: string;
+}
+
+export type AddendaLayout = '2up' | '4up' | '6up';
+export interface AddendaCell { photoId?: string; caption?: string; }
+export interface AddendaPage { id: string; layout: AddendaLayout; cells: AddendaCell[]; }
+export interface PhotoAddenda { orderId: string; pages: AddendaPage[]; updatedAt: string; }
+
+export interface PhotosQcSummary {
+  requiredPresent: boolean;
+  missingCategories: PhotoCategory[];
+  unresolvedDetections: number;
+  status: 'green' | 'yellow' | 'red';
+}
+
+
+⸻
+
+3) API client (fetch helpers)
+
+Create lib/photoApi.ts with typed wrappers for the existing endpoints using endpointPaths + DEV_AUTH. All responses should be schema‑checked (basic runtime guards) and throw on non‑OK with friendly error text.
+
+⸻
+
+4) Photos Tab UI (integrate into existing Order shell)
+
+Update app/orders/[orderId]/(tabs)/photos/page.tsx (or create if missing) with a two‑pane layout:
+	•	Top toolbar:
+	•	Upload / Use Camera button (<input type="file" accept="image/*" capture="environment" multiple>),
+	•	Category filter dropdown,
+	•	Bulk actions (Assign Category, Caption Prefix, Delete),
+	•	QC chip (R/Y/G) + tooltip (missing categories, unresolved detections),
+	•	Export Addenda PDF button.
+	•	Left pane: PhotoGallery (thumbnails, drag‑reorder, per‑item context menu for Edit & Blur / Category / Caption / Delete).
+	•	Right pane: AddendaBuilder (pages, layouts 2/4/6‑up, drag from gallery, inline captions, add/remove/reorder pages).
+	•	Mobile: tabs to toggle Gallery | Addenda; Editor modal is full‑screen.
+
+Components to build (all TS + Tailwind):
+	•	components/photos/PhotoCaptureBar.tsx
+	•	components/photos/PhotoGallery.tsx
+	•	components/photos/PhotoTile.tsx (thumb + badges + menu)
+	•	components/photos/PhotoEditorModal.tsx
+	•	components/photos/AddendaBuilder.tsx
+	•	components/photos/AddendaExportBar.tsx
+	•	components/photos/PhotosQcBadge.tsx
+
+⸻
+
+5) Upload & ingest flow (uses existing API)
+	•	On upload: call uploadPhoto(orderId); show progress; upon success, refresh list.
+	•	Post‑upload: lazy trigger auto‑detection if server doesn’t do it (we handle on FE):
+	•	Load face‑api models (if present) → propose detections to the user when they open the editor.
+	•	If models are absent, show banner: “Auto‑detect unavailable; use manual tools.”
+	•	Show per‑tile metadata (EXIF date, GPS badge if present).
+	•	Enable drag‑reorder (front‑end order only; no backend change required).
+
+⸻
+
+6) Auto‑blurring + manual redaction editor (non‑destructive)
+	•	PhotoEditorModal (opens from a tile):
+	•	Canvas with zoom/pan (pinch on mobile; wheel + ctrl on desktop).
+	•	Toolbar: Select/Move, Box Blur, Brush Blur (radius/strength sliders), Undo/Redo, Before/After toggle, Save, Reset suggestions.
+	•	Sidebar list of auto‑detections (Face #), each toggleable accept/reject.
+	•	Save → call setMasks() with current masks, then processBlur() to render blurred derivative on server (or if API expects FE processing, we still call processBlur() as a no‑op to keep parity).
+	•	Always preserve original; masks are stored in JSON; reopening modal reloads masks.
+	•	For performance: apply blur math in a Web Worker (components/photos/BlurWorker.ts) when we must preview processed result client‑side.
+
+⸻
+
+7) Addenda builder + PDF export
+	•	Templates: 2‑up, 4‑up, 6‑up; each cell shows drop target; render blurred image variant if available, otherwise display image.
+	•	Add/remove/reorder pages; inline captions with char counter; default caption from category + address snippet.
+	•	Persist structure via addendaPut().
+	•	Export calls addendaExport(); UI shows progress & then a download link to the returned pdfPath.
+
+⸻
+
+8) QC and Sign‑off tie‑ins (light, UI only)
+	•	Fetch qcSummary(orderId) and show an RYG chip in the Photos tab header.
+	•	If status==='red', block sign‑off (reuse the existing sign‑off dialog pattern) unless an override reason is provided; call whatever sign‑off API the project already uses (no new APIs).
+	•	Chip tooltip lists missing required categories and unresolved detections.
+
+⸻
+
+9) Accessibility & responsive
+	•	All controls keyboard‑operable; visible focus.
+	•	Editor modal supports keyboard shortcuts (if easy): B (Box), R (Brush), Z (Undo with Ctrl/Cmd+Z).
+	•	Mobile: full‑screen editor; gallery/addenda toggle; no horizontal scroll overflow.
+
+⸻
+
+10) Acceptance Criteria (demo checklist)
+	•	Upload + camera capture works; previews show with EXIF/GPS badges.
+	•	Tiles support per‑item actions and bulk actions; drag‑reorder works.
+	•	Editor modal: face detections (if models present), box & brush tools, undo/redo, before/after, Save persists masks and triggers server processing; reopening shows prior masks.
+	•	Addenda builder: drag photos into cells, edit captions, add/remove/reorder pages; Export PDF returns a link and saves file; reopening tab shows persisted structure.
+	•	QC chip reflects required photo presence & unresolved detections; sign‑off blocked on Red unless override reason provided.
+	•	All API calls use the existing endpoints via endpointPaths.ts; 401/403 shows the auth banner with env var hints.
+	•	No new backend routes were added or modified.
+
+⸻
+
+11) Manual Test Script (copy/paste)
+	1.	Open /orders/123 → Photos tab.
+	2.	Upload 6–10 images (mix rooms + faces). Confirm previews + EXIF date + GPS badge.
+	3.	Open Edit & Blur on a face photo → accept suggested boxes, add a manual Box over a wall art; paint a Brush blur; Save → tile shows blurred variant. Reopen to confirm masks persisted.
+	4.	Assign categories (Exterior Front, Street, Kitchen, Bath, Living) → QC chip turns Green when required present.
+	5.	Build two addenda pages (4‑up, 6‑up), drag photos into cells, edit captions → Export PDF; download link works; reload page → structure persists.
+	6.	Toggle to mobile view: capture from camera, edit blur, save; navigate between Gallery | Addenda.
+	7.	Temporarily remove a required category → QC chip Red; attempt sign‑off → blocked until you fix or provide override reason.
+
+⸻
+
+12) Libraries to add
+
+npm i @vladmandic/face-api classnames
+
+(Use existing libs for PDF export if already present; otherwise add jspdf + html2canvas or pdf-lib. Prefer what the repo already uses.)
+
+Models: Place face‑api model files under /public/models/faceapi/; lazy‑load with try/catch. If absent, show the manual‑tools‑only banner.
+
+⸻
+
+13) Deliverables
+	•	Components under components/photos/* as listed.
+	•	config/endpointPaths.ts and config/auth.ts.
+	•	lib/photoApi.ts (typed client).
+	•	Updated Photos tab page integrated into the existing Order shell.
+	•	No backend changes.
+
+⸻
+
+Please implement exactly this frontend slice and wire it to the existing secured Photo API. If any endpoint names differ, centralize those changes in config/endpointPaths.ts only.
+
+⸻
+
+(Optional) Quick verification checklist for me
+	•	Run app → Photos tab shows gallery & addenda panes.
+	•	Try an action with wrong .env.local → see auth banner.
+	•	Upload + edit blur + export PDF → all persists after refresh.
+
+If you want, I can also give you a short QA script to hand to Replit after they deliver this UI so you can accept it fast.
