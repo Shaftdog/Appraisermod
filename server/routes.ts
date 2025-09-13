@@ -2,12 +2,149 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema } from "@shared/schema";
+import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema } from "@shared/schema";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
+import multer from "multer";
+import fs from "fs/promises";
+import path from "path";
+import sharp from "sharp";
 import "./types"; // Import session type extensions
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Utility function to validate and sanitize orderId
+  function validateOrderId(orderId: string): boolean {
+    // Only allow alphanumeric, hyphens, and underscores
+    return /^[A-Za-z0-9_-]+$/.test(orderId) && orderId.length > 0 && orderId.length < 100;
+  }
+
+  // In-memory order assignments for secure authorization (TODO: Replace with database-backed system)
+  const orderAssignments = new Map<string, Set<string>>(); // orderId -> Set of userIds
+  
+  // Initialize with sample assignment for development
+  orderAssignments.set('order-123', new Set(['40f965ba-4d70-41e6-ad21-dec093f9c96e']));
+
+  // Utility function to verify user authorization for an order
+  async function verifyUserCanAccessOrder(user: any, orderId: string): Promise<boolean> {
+    // Check that the order exists
+    const order = await storage.getOrder(orderId);
+    if (!order) {
+      return false;
+    }
+    
+    // Admins can access all orders
+    if (user.role === 'admin') {
+      return true;
+    }
+    
+    // Check explicit order assignment using stable userId
+    const assignedUsers = orderAssignments.get(orderId);
+    if (assignedUsers && assignedUsers.has(user.id)) {
+      return true;
+    }
+    
+    // DENY by default - no backdoors for unauthorized access
+    return false;
+  }
+  
+  // Utility function to assign users to orders (for development/admin use)
+  function assignUserToOrder(userId: string, orderId: string): void {
+    if (!orderAssignments.has(orderId)) {
+      orderAssignments.set(orderId, new Set());
+    }
+    orderAssignments.get(orderId)!.add(userId);
+  }
+
+  // Utility function to safely create order photo paths
+  function createSafeOrderPhotoPath(orderId: string, ...pathSegments: string[]): { 
+    relativePath: string; 
+    absolutePath: string; 
+  } | null {
+    if (!validateOrderId(orderId)) {
+      return null;
+    }
+    
+    const baseDir = path.join(process.cwd(), 'data');
+    const relativePath = path.join('data', 'orders', orderId, 'photos', ...pathSegments);
+    const absolutePath = path.resolve(baseDir, 'orders', orderId, 'photos', ...pathSegments);
+    
+    // Verify the path stays within the base directory
+    if (!absolutePath.startsWith(baseDir + path.sep)) {
+      return null;
+    }
+    
+    return { relativePath, absolutePath };
+  }
+
+  // Secure file serving for photos with per-order authorization
+  app.get('/api/orders/:id/photos/:photoId/file', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id: orderId, photoId } = req.params;
+      const variant = req.query.variant as string || 'display';
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: 'Invalid order ID' });
+      }
+      
+      // Verify user has access to this order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      
+      // Get photo metadata to verify it exists
+      const photo = await storage.getPhoto(orderId, photoId);
+      if (!photo) {
+        return res.status(404).json({ message: 'Photo not found' });
+      }
+      
+      // Determine which file path to serve
+      let filePath: string;
+      switch (variant) {
+        case 'original':
+          filePath = photo.originalPath;
+          break;
+        case 'thumb':
+          filePath = photo.thumbPath;
+          break;
+        case 'display':
+        default:
+          filePath = photo.displayPath;
+          break;
+      }
+      
+      const absolutePath = path.join(process.cwd(), filePath);
+      
+      // Defense-in-depth: verify path is still within base directory
+      const baseDir = path.join(process.cwd(), 'data');
+      const resolvedPath = path.resolve(absolutePath);
+      if (!resolvedPath.startsWith(baseDir + path.sep)) {
+        return res.status(403).json({ message: 'Invalid file path' });
+      }
+      
+      // Verify the file exists and serve it safely
+      try {
+        await fs.access(resolvedPath);
+        
+        // For original files, force download to prevent XSS
+        if (variant === 'original') {
+          res.setHeader('Content-Disposition', 'attachment');
+          res.setHeader('Content-Type', 'application/octet-stream');
+        }
+        
+        res.sendFile(resolvedPath);
+      } catch (error) {
+        res.status(404).json({ message: 'File not found on disk' });
+      }
+    } catch (error) {
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  });
   // Get order
   app.get("/api/orders/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
@@ -501,6 +638,389 @@ export async function registerRoutes(app: Express): Promise<Server> {
           role: user.role
         }
       });
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Photos Module API Routes
+  
+  // Configure multer for photo uploads
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit
+    },
+    fileFilter: (req, file, cb) => {
+      // Only allow safe image types, exclude SVG and other potentially unsafe formats
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only JPEG, PNG, WebP, and GIF files are allowed'));
+      }
+    }
+  });
+
+  // Utility function to ensure directory exists
+  async function ensureDir(dirPath: string) {
+    try {
+      await fs.mkdir(dirPath, { recursive: true });
+    } catch (error) {
+      // Directory might already exist
+    }
+  }
+
+  // Get all photos for an order
+  app.get("/api/orders/:id/photos", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const photos = await storage.getPhotos(orderId);
+      res.json(photos);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get single photo
+  app.get("/api/orders/:id/photos/:photoId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id: orderId, photoId } = req.params;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const photo = await storage.getPhoto(orderId, photoId);
+      
+      if (!photo) {
+        return res.status(404).json({ message: "Photo not found" });
+      }
+      
+      res.json(photo);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Upload photos (supports multiple files)
+  app.post("/api/orders/:id/photos/upload", requireAuth, (req, res, next) => {
+    upload.array('photos', 10)(req, res, (err: any) => {
+      if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(413).json({ message: 'File size too large. Maximum 10MB per file.' });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(400).json({ message: 'Too many files. Maximum 10 files allowed.' });
+        }
+        if (err.message === 'Only image files are allowed') {
+          return res.status(400).json({ message: 'Only image files are allowed' });
+        }
+        return res.status(400).json({ message: err.message || 'File upload error' });
+      }
+      next();
+    });
+  }, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const files = req.files as Express.Multer.File[];
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: "Invalid order ID" });
+      }
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No files provided" });
+      }
+
+      // Create safe paths and ensure directories exist
+      const basePaths = createSafeOrderPhotoPath(orderId);
+      if (!basePaths) {
+        return res.status(400).json({ message: "Invalid order ID for file operations" });
+      }
+      
+      await ensureDir(path.join(basePaths.absolutePath, 'original'));
+      await ensureDir(path.join(basePaths.absolutePath, 'display'));
+      await ensureDir(path.join(basePaths.absolutePath, 'thumb'));
+
+      const uploadedPhotos: PhotoMeta[] = [];
+
+      for (const file of files) {
+        const photoId = `photo-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const ext = path.extname(file.originalname) || '.jpg';
+        
+        // Create secure paths for each variant
+        const originalPaths = createSafeOrderPhotoPath(orderId, 'original', `${photoId}${ext}`);
+        const displayPaths = createSafeOrderPhotoPath(orderId, 'display', `${photoId}.jpg`);
+        const thumbPaths = createSafeOrderPhotoPath(orderId, 'thumb', `${photoId}.jpg`);
+        
+        if (!originalPaths || !displayPaths || !thumbPaths) {
+          throw new Error('Failed to create secure file paths');
+        }
+
+        // Save original
+        await fs.writeFile(originalPaths.absolutePath, file.buffer);
+
+        // Create display version (max 1920px, 85% quality) with proper orientation
+        const displayBuffer = await sharp(file.buffer)
+          .rotate() // Auto-rotate based on EXIF orientation
+          .resize(1920, 1920, { 
+            fit: 'inside', 
+            withoutEnlargement: true 
+          })
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        await fs.writeFile(displayPaths.absolutePath, displayBuffer);
+
+        // Create thumbnail (max 320px)
+        const thumbBuffer = await sharp(file.buffer)
+          .rotate() // Auto-rotate based on EXIF orientation
+          .resize(320, 320, { 
+            fit: 'inside', 
+            withoutEnlargement: true 
+          })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        await fs.writeFile(thumbPaths.absolutePath, thumbBuffer);
+
+        // Extract metadata
+        const metadata = await sharp(file.buffer).metadata();
+        
+        const photoData = {
+          orderId,
+          originalPath: originalPaths.relativePath,
+          displayPath: displayPaths.relativePath,
+          thumbPath: thumbPaths.relativePath,
+          width: metadata.width || 0,
+          height: metadata.height || 0,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+          exif: {
+            // TODO: Add EXIF extraction using exifr
+            takenAt: new Date().toISOString(),
+          }
+        };
+
+        const photo = await storage.createPhoto(orderId, photoData);
+        uploadedPhotos.push(photo);
+      }
+
+      res.json(uploadedPhotos);
+    } catch (error) {
+      res.status(500).json({ message: error instanceof Error ? error.message : "Internal server error" });
+    }
+  });
+
+  // Update photo metadata
+  app.put("/api/orders/:id/photos/:photoId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id: orderId, photoId } = req.params;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = photoUpdateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid photo data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const updatedPhoto = await storage.updatePhoto(orderId, photoId, validationResult.data);
+      res.json(updatedPhoto);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Photo not found') {
+        return res.status(404).json({ message: "Photo not found" });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete photo
+  app.delete("/api/orders/:id/photos/:photoId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id: orderId, photoId } = req.params;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      await storage.deletePhoto(orderId, photoId);
+      res.json({ message: "Photo deleted successfully" });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Photo not found') {
+        return res.status(404).json({ message: "Photo not found" });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update photo masks (for blurring/redaction)
+  app.post("/api/orders/:id/photos/:photoId/masks", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id: orderId, photoId } = req.params;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = photoMasksSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid mask data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const updatedPhoto = await storage.updatePhotoMasks(orderId, photoId, validationResult.data);
+      res.json(updatedPhoto);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Photo not found') {
+        return res.status(404).json({ message: "Photo not found" });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Process photo (apply blur masks)
+  app.post("/api/orders/:id/photos/:photoId/process", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id: orderId, photoId } = req.params;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const processedPhoto = await storage.processPhoto(orderId, photoId);
+      res.json(processedPhoto);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Photo not found') {
+        return res.status(404).json({ message: "Photo not found" });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Bulk update photos
+  app.post("/api/orders/:id/photos/bulk-update", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = bulkPhotoUpdateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid bulk update data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const { photoIds, updates } = validationResult.data;
+      const updatedPhotos = await storage.bulkUpdatePhotos(orderId, photoIds, updates);
+      res.json(updatedPhotos);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Addenda Routes
+
+  // Get photo addenda
+  app.get("/api/orders/:id/photos/addenda", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const addenda = await storage.getPhotoAddenda(orderId);
+      res.json(addenda);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update photo addenda
+  app.put("/api/orders/:id/photos/addenda", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = photoAddendaSchema.safeParse({ ...req.body, orderId });
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid addenda data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const { pages, updatedAt } = req.body;
+      const updatedAddenda = await storage.updatePhotoAddenda(orderId, { pages, updatedAt });
+      res.json(updatedAddenda);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Export addenda to PDF
+  app.post("/api/orders/:id/photos/addenda/export", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const result = await storage.exportPhotoAddenda(orderId);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // QC Summary Route
+
+  // Get photos QC summary
+  app.get("/api/orders/:id/photos/qc", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const qcSummary = await storage.getPhotosQcSummary(orderId);
+      res.json(qcSummary);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
     }
