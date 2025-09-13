@@ -80,19 +80,7 @@ export function AddendaPdfExporter({
 
       // Convert settings and prepare input
       const pdfOptions = convertExportSettings(settings);
-      const input: GenerateAddendaInput = {
-        orderId,
-        addenda,
-        photosById,
-        options: pdfOptions,
-        meta: {
-          title: settings.title,
-          author: settings.author,
-          subject: settings.subject,
-          keywords: settings.keywords
-        }
-      };
-
+      
       // Only include metadata if user enabled it
       const metaToInclude = settings.includeMetadata ? {
         title: settings.title,
@@ -101,10 +89,16 @@ export function AddendaPdfExporter({
         keywords: settings.keywords
       } : undefined;
 
-      const inputWithMeta = { ...input, meta: metaToInclude };
+      const input: GenerateAddendaInput = {
+        orderId,
+        addenda,
+        photosById,
+        options: pdfOptions,
+        meta: metaToInclude
+      };
 
       // Generate PDF
-      const result = await generateAddendaPdf(inputWithMeta);
+      const result = await generateAddendaPdf(input);
       
       setExportState({ 
         status: 'uploading', 
