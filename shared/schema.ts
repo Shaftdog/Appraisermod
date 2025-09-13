@@ -576,5 +576,6 @@ export const adjustmentRunInputSchema = z.object({
   orderId: z.string().min(1),
   compIds: z.array(z.string().min(1)).min(1),
   subject: subjectPropertySchema,
-  marketBasis: z.enum(['salePrice', 'ppsf'])
+  marketBasis: z.enum(['salePrice', 'ppsf']),
+  engineSettings: engineSettingsSchema.optional()
 });

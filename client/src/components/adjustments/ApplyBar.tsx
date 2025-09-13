@@ -24,12 +24,13 @@ import { cn } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { type AdjustmentRunInput, type AdjustmentRunResult, type AdjustmentsBundle } from "@shared/adjustments";
+import { type AdjustmentRunInput, type AdjustmentRunResult, type AdjustmentsBundle, type EngineSettings } from "@shared/adjustments";
 
 interface ApplyBarProps {
   orderId: string;
   lastRun?: AdjustmentRunResult | null;
   bundle?: AdjustmentsBundle | null;
+  engineSettings: EngineSettings;
   onRunComplete: (run: AdjustmentRunResult) => void;
   onApplyComplete: (bundle: AdjustmentsBundle) => void;
   className?: string;
@@ -41,6 +42,7 @@ export function ApplyBar({
   orderId, 
   lastRun, 
   bundle, 
+  engineSettings,
   onRunComplete, 
   onApplyComplete, 
   className 
@@ -123,7 +125,8 @@ export function ApplyBar({
         pool: false,
         view: 2
       }, // TODO: Get from actual subject
-      marketBasis
+      marketBasis,
+      engineSettings
     };
 
     computeMutation.mutate(input);

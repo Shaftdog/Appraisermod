@@ -1261,6 +1261,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update attribute overrides
+  app.patch("/api/orders/:id/adjustments/overrides", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Validate request body - expecting { attrKey, value, source?, note? }
+      const { attrKey, value, source = 'manual', note } = req.body;
+      if (!attrKey || typeof value !== 'number') {
+        return res.status(400).json({ message: 'attrKey and value are required' });
+      }
+      
+      const result = await storage.updateAttributeOverride(orderId, attrKey, value, source, note);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Apply adjustments to comps
   app.post("/api/orders/:id/adjustments/apply", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {

@@ -77,6 +77,7 @@ export interface IStorage {
   computeAdjustments(orderId: string, input: AdjustmentRunInput): Promise<AdjustmentRunResult>;
   getAdjustmentRun(orderId: string): Promise<AdjustmentRunResult | null>;
   updateAdjustmentSettings(orderId: string, settings: Partial<EngineSettings>): Promise<EngineSettings>;
+  updateAttributeOverride(orderId: string, attrKey: string, value: number, source?: 'blend' | 'manual', note?: string): Promise<AttrAdjustment>;
   applyAdjustments(orderId: string): Promise<AdjustmentsBundle>;
   getAdjustmentsBundle(orderId: string): Promise<AdjustmentsBundle | null>;
 }
@@ -1197,8 +1198,12 @@ export class DatabaseStorage implements IStorage {
     const runId = randomUUID();
     const computedAt = new Date().toISOString();
     
-    // Get existing settings or use defaults
-    const settings = await this.getAdjustmentSettings(orderId);
+    // Get existing settings and merge with input settings (input takes priority)
+    const storedSettings = await this.getAdjustmentSettings(orderId);
+    const settings: EngineSettings = {
+      ...storedSettings,
+      ...(input.engineSettings || {})
+    };
     
     // Get comps and subject for analysis
     const comps = await this.getCompsWithScoring(orderId);
@@ -1270,6 +1275,37 @@ export class DatabaseStorage implements IStorage {
     await fs.promises.writeFile(filePath, JSON.stringify(updated, null, 2));
     
     return updated;
+  }
+
+  async updateAttributeOverride(orderId: string, attrKey: string, value: number, source: 'blend' | 'manual' = 'manual', note?: string): Promise<AttrAdjustment> {
+    const run = await this.getAdjustmentRun(orderId);
+    if (!run) {
+      throw new Error('No adjustment run found');
+    }
+
+    // Find the attribute to update
+    const attrIndex = run.attrs.findIndex(attr => attr.key === attrKey);
+    if (attrIndex === -1) {
+      throw new Error(`Attribute ${attrKey} not found in adjustment run`);
+    }
+
+    // Update the chosen value
+    const updatedAttr = {
+      ...run.attrs[attrIndex],
+      chosen: { value, source, note }
+    };
+
+    // Update the attrs array
+    const updatedAttrs = [...run.attrs];
+    updatedAttrs[attrIndex] = updatedAttr;
+
+    // Save the updated run
+    const updatedRun = { ...run, attrs: updatedAttrs };
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'run.json');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(updatedRun, null, 2));
+
+    return updatedAttr;
   }
 
   async applyAdjustments(orderId: string): Promise<AdjustmentsBundle> {

@@ -64,6 +64,7 @@ export interface AdjustmentRunInput {
   compIds: string[];           // which comps to evaluate (candidate + primary)
   subject: SubjectProperty;
   marketBasis: 'salePrice' | 'ppsf';
+  engineSettings?: EngineSettings; // user's engine weight preferences
 }
 
 export interface AdjustmentRunResult {
