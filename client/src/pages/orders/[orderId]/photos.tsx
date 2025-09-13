@@ -210,11 +210,10 @@ export default function Photos() {
     }
   };
 
-  const handlePhotoSave = (photo: PhotoMeta, masks: PhotoMeta['masks']) => {
-    updatePhotoMutation.mutate({
-      photoId: photo.id,
-      updates: { masks }
-    });
+  const handlePhotoSave = (updatedPhoto: PhotoMeta) => {
+    // Refresh queries to get the updated photo data
+    queryClient.invalidateQueries({ queryKey: ['/api/photos', orderId] });
+    queryClient.invalidateQueries({ queryKey: ['/api/photos', orderId, 'qc'] });
     setEditingPhoto(null);
   };
 
@@ -409,16 +408,15 @@ export default function Photos() {
       </div>
 
       {/* Photo Editor Modal */}
-      <PhotoEditorModal
-        photo={editingPhoto}
-        open={!!editingPhoto}
-        onClose={() => setEditingPhoto(null)}
-        onSave={handlePhotoSave}
-        onDownload={(photo, variant) => {
-          // TODO: Implement download functionality
-          console.log('Download photo:', photo.id, variant);
-        }}
-      />
+      {editingPhoto && (
+        <PhotoEditorModal
+          isOpen={!!editingPhoto}
+          photo={editingPhoto}
+          orderId={orderId!}
+          onClose={() => setEditingPhoto(null)}
+          onSave={handlePhotoSave}
+        />
+      )}
 
       {showVersions && (
         <VersionDiffViewer
