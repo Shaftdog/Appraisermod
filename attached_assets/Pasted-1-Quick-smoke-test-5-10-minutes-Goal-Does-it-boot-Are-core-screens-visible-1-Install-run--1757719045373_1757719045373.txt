@@ -1,0 +1,178 @@
+1) Quick smoke test (5–10 minutes)
+
+Goal: Does it boot? Are core screens visible?
+	1.	Install & run
+	•	In Replit, click Run (or npm i && npm run dev if using shell).
+	•	Open the preview URL.
+	2.	Navigate to an order
+	•	Visit /orders/<sample-id> (they should seed a sample; e.g., /orders/123).
+	•	You should see:
+	•	Page header with Order #, Client, Due date, and an Overall R/Y/G status chip.
+	•	Left tab nav: Order Summary, Subject, Market, Comps, Sketch, Photos, Cost, Reconciliation, QC & Sign‑off, Exports.
+	3.	Expectations
+	•	No console errors in the browser DevTools.
+	•	No red errors in the server logs.
+	•	The app uses Next.js App Router (app/ folder) and TypeScript.
+
+If any of the above fails, stop and request fixes before deeper testing.
+
+⸻
+
+2) UI/UX acceptance checks (mapped to your prompt)
+
+A) Left nav + tabs
+	•	Click each tab; the content pane updates.
+	•	On mobile (DevTools → Toggle device toolbar):
+	•	The left nav collapses into a drawer behind a Menu/Tabs button.
+	•	Opening/closing the drawer works smoothly.
+	•	Keyboard:
+	•	Tab to focus the first tab, use Arrow keys or Tab to move between tabs.
+	•	Focus styling is visible; Enter/Space opens the selected tab.
+
+Pass if: Tabs work on desktop and mobile; keyboard accessibility is intact.
+
+⸻
+
+B) Status chips (RYG)
+	•	Each tab name in the left nav shows a status chip (Green/Yellow/Red) and counts (Open Issues / Overridden).
+	•	Hover/focus the chip: a tooltip shows:
+	•	Open issues count
+	•	Overridden issues count
+	•	Last reviewed by + timestamp (mocked is fine)
+	•	Overall chip in the header:
+	•	If any tab is Red → Overall Red.
+	•	Else if any tab is Yellow → Overall Yellow.
+	•	Else Green.
+
+Edge case test: If they expose a mock API to flip a tab’s QC, change one tab to Red and confirm the overall flips to Red.
+
+Pass if: Per‑tab chips + overall aggregation behave exactly as above.
+
+⸻
+
+C) Sign‑off flow (per tab)
+	1.	Open a tab that has open issues (ideally one Yellow and one Red).
+	2.	Click “Sign this section”:
+	•	A confirm dialog appears with a summary of open issues.
+	•	If status = Red, the dialog must require an “override reason” to proceed.
+	3.	Confirm sign‑off:
+	•	The tab now displays “Signed by  on ”.
+	•	If there was a Red override, a “View overrides” link appears and shows your note.
+
+Negative case: Try signing a Red tab without an override reason. It should block with a validation message.
+
+Pass if: The required override is enforced, metadata is immutable and visible.
+
+⸻
+
+D) Version Diff Viewer
+	1.	Click the “Versions” button in any tab.
+	2.	In the dialog/panel:
+	•	Two dropdowns to select From and To versions (seeded with ≥3 snapshots).
+	•	Field View: shows per‑field changes (Added / Removed / Changed), with old→new values.
+	•	Raw JSON Diff: shows colorized adds/removes/changes.
+	•	Copy diff button copies the diff to clipboard.
+	•	Restore this version button is present but disabled (per your prompt).
+
+Edge case: Compare two identical versions (should show “No differences” or an empty diff).
+
+Pass if: Both views render, switching versions updates the diff, copy works, restore stays disabled.
+
+⸻
+
+3) Data & persistence sanity
+	•	Refresh the page: Sign‑off metadata and overrides persist.
+	•	If they implemented file‑backed mocks (JSON): stop/start the dev server; confirm the seeded order still loads and your sign‑offs remain (if they serialize back to file).
+If they only used in‑memory mock storage, ask them to write back to a JSON file to simulate persistence.
+
+Pass if: State survives refresh; ideally survives server restart.
+
+⸻
+
+4) Accessibility quick checks (10 minutes)
+	•	Use keyboard only: you can reach tabs, buttons, tooltips, dialog controls.
+	•	Tooltips also open on focus (not only hover).
+	•	Color contrast: Red/Yellow/Green chips have labels/icons, not color‑only meaning.
+
+Nice‑to‑have: Run Lighthouse (Chrome DevTools → Lighthouse → Accessibility) and confirm ≥90 score.
+
+⸻
+
+5) Responsive checks (5 minutes)
+	•	Set viewport to mobile widths (iPhone 12 or similar).
+	•	Verify:
+	•	Drawer nav behaves (no content overflow).
+	•	Chips and buttons wrap gracefully.
+	•	Version viewer is usable on small screens (scrolls, no clipped controls).
+
+⸻
+
+6) Code quality spot‑check (2–5 minutes)
+
+Open the Replit file tree; verify:
+	•	TypeScript types in types/ (RiskStatus, TabState, Order, etc.).
+	•	Component files exist as requested:
+	•	components/LeftNavTabs.tsx
+	•	components/StatusChip.tsx
+	•	components/SignoffPanel.tsx
+	•	components/VersionDiffViewer.tsx
+	•	components/ConfirmDialog.tsx
+	•	components/Toolbar.tsx
+	•	lib/aggregateStatus.ts
+	•	lib/diff.ts
+	•	app/orders/[orderId]/layout.tsx exists (App Router).
+	•	Mock API routes under app/api/....
+
+Pass if: Structure matches; types are present; no obvious TODO stubs in place of real components.
+
+⸻
+
+7) Functional test script you can read aloud (copy/paste)
+	1.	Open /orders/123. Confirm header shows Overall: Red.
+	2.	In left nav:
+	•	Order Summary chip = Green (0 open).
+	•	Market chip = Yellow (≥1 open).
+	•	Comps chip = Red (≥1 critical).
+	3.	Click Comps → Sign this section → leave reason blank → Expect error.
+	4.	Enter override reason → Confirm → Signoff metadata shows your name/time + “View overrides”.
+	5.	Click Versions → select v2 → v3 → Field View shows changed fields; switch to Raw JSON Diff; Copy diff.
+	6.	Go to Market → Sign this section (no override needed).
+	7.	Confirm Overall chip recomputes based on current tab colors (still Red if any tab remains Red).
+	8.	Switch to mobile width → open the drawer → navigate to QC & Sign‑off tab; confirm controls work via keyboard.
+
+If anything fails, capture a short screen recording and send back to Replit with the exact step and expected vs actual behavior.
+
+⸻
+
+8) Common failure modes to watch for (and what to ask them to fix)
+	•	Tabs don’t keyboard‑navigate → Add proper role="tablist"/"tab" and aria-selected.
+	•	Tooltips only on hover → Add focus handlers for accessibility.
+	•	Overall status not recalculating → Fix aggregateStatus logic (Red > Yellow > Green).
+	•	Sign‑off allows Red without reason → Enforce validation in the API route, not only in the UI.
+	•	Diff viewer shows raw objects without highlighting → Ensure diff lib is properly wired; test with two snapshots that actually differ.
+	•	State lost on refresh → Implement simple file‑based persistence for mocks (or at least localStorage per tab as a stopgap).
+
+⸻
+
+9) Optional: light automation (if you want)
+	•	Unit tests (Vitest):
+	•	aggregateStatus.spec.ts → verifies overall status logic.
+	•	diff.spec.ts → verifies JSON diff output contracts.
+	•	E2E (Playwright) basics:
+	•	Load order → click tab → open sign‑off → enforce override → see metadata.
+
+Even one or two tests give you leverage for future refactors.
+
+⸻
+
+10) Simple Go/No‑Go gate
+
+Go if all of these are true:
+	•	App boots without errors.
+	•	Tabs + drawer + keyboard access work.
+	•	R/Y/G chips + overall aggregation correct.
+	•	Red sign‑off requires reason; metadata/overrides visible.
+	•	Version diff viewer fully functional (2 modes, copy works).
+	•	State persists across refresh.
+
+No‑Go if any of the above are broken. Send Replit a concise bug list with repro steps.

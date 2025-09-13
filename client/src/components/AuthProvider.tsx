@@ -82,6 +82,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = async (username: string, password: string) => {
     await loginMutation.mutateAsync({ username, password });
+    // Wait for the user data to be refetched after successful login
+    await queryClient.refetchQueries({ queryKey: ["/api/auth/me"] });
   };
 
   const register = async (userData: { username: string; password: string; email: string; fullName: string; role?: string }) => {
