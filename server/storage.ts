@@ -1,4 +1,5 @@
 import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
+import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, type CompAdjustmentLine, type AttrAdjustment, type CostBaseline, type DepreciationCurve, DEFAULT_ENGINE_SETTINGS, ATTR_METADATA } from "@shared/adjustments";
 import { users, orders, versions } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -71,6 +72,13 @@ export interface IStorage {
   computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>): Promise<McrMetrics>;
   getTimeAdjustments(orderId: string): Promise<TimeAdjustments>;
   updateTimeAdjustments(orderId: string, adjustments: Partial<TimeAdjustments>): Promise<TimeAdjustments>;
+
+  // Adjustments Engine methods
+  computeAdjustments(orderId: string, input: AdjustmentRunInput): Promise<AdjustmentRunResult>;
+  getAdjustmentRun(orderId: string): Promise<AdjustmentRunResult | null>;
+  updateAdjustmentSettings(orderId: string, settings: Partial<EngineSettings>): Promise<EngineSettings>;
+  applyAdjustments(orderId: string): Promise<AdjustmentsBundle>;
+  getAdjustmentsBundle(orderId: string): Promise<AdjustmentsBundle | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1179,6 +1187,316 @@ export class DatabaseStorage implements IStorage {
     fs.writeFileSync(adjustmentsPath, JSON.stringify(updatedAdjustments, null, 2));
     
     return updatedAdjustments;
+  }
+
+  // ===== ADJUSTMENTS ENGINE METHODS =====
+
+  async computeAdjustments(orderId: string, input: AdjustmentRunInput): Promise<AdjustmentRunResult> {
+    const runId = randomUUID();
+    const computedAt = new Date().toISOString();
+    
+    // Get existing settings or use defaults
+    const settings = await this.getAdjustmentSettings(orderId);
+    
+    // Get comps and subject for analysis
+    const comps = await this.getCompsWithScoring(orderId);
+    const subject = await this.getSubject(orderId);
+    
+    // Load cost baselines and depreciation curves
+    const costBaseline = await this.loadCostBaseline();
+    
+    // Compute adjustments for each attribute
+    const attrs: AttrAdjustment[] = [];
+    
+    for (const [attrKey, metadata] of Object.entries(ATTR_METADATA)) {
+      const attr = attrKey as keyof typeof ATTR_METADATA;
+      
+      // Compute regression suggestion
+      const regression = this.computeRegressionAdjustment(attr, comps.comps, subject, input.marketBasis);
+      
+      // Compute cost suggestion
+      const cost = this.computeCostAdjustment(attr, costBaseline, subject);
+      
+      // Compute paired sales suggestion
+      const paired = this.computePairedAdjustment(attr, comps.comps, subject);
+      
+      // Blend based on engine weights
+      const chosen = this.blendEngineResults(settings.weights, { regression, cost, paired });
+      
+      attrs.push({
+        key: attr,
+        regression,
+        cost,
+        paired,
+        chosen,
+        unit: metadata.unit,
+        direction: metadata.direction,
+        provenance: this.buildProvenance(attr, { regression, cost, paired })
+      });
+    }
+    
+    const result: AdjustmentRunResult = {
+      runId,
+      computedAt,
+      attrs,
+      settings,
+      input
+    };
+    
+    // Save to file
+    await this.saveAdjustmentRun(orderId, result);
+    
+    return result;
+  }
+
+  async getAdjustmentRun(orderId: string): Promise<AdjustmentRunResult | null> {
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'run.json');
+    try {
+      const data = await fs.promises.readFile(filePath, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  async updateAdjustmentSettings(orderId: string, settingsUpdate: Partial<EngineSettings>): Promise<EngineSettings> {
+    const current = await this.getAdjustmentSettings(orderId);
+    const updated = { ...current, ...settingsUpdate };
+    
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'settings.json');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(updated, null, 2));
+    
+    return updated;
+  }
+
+  async applyAdjustments(orderId: string): Promise<AdjustmentsBundle> {
+    const run = await this.getAdjustmentRun(orderId);
+    if (!run) {
+      throw new Error('No adjustment run found');
+    }
+    
+    const { comps } = await this.getCompsWithScoring(orderId);
+    const subject = await this.getSubject(orderId);
+    const timeAdjustments = await this.getTimeAdjustments(orderId);
+    
+    // Apply adjustments to each comp
+    const compLines: CompAdjustmentLine[] = comps.map(comp => {
+      const lines = run.attrs.map(attr => {
+        const delta = this.calculateAttributeDelta(attr, comp, subject);
+        const adjustedDelta = delta * attr.chosen.value;
+        
+        return {
+          key: attr.key,
+          delta: adjustedDelta,
+          rationale: this.buildRationale(attr, delta, adjustedDelta),
+          unit: attr.unit
+        };
+      });
+      
+      const subtotal = lines.reduce((sum, line) => sum + line.delta, 0);
+      
+      // Calculate indicated value (sale price + time adj + attribute adjustments)
+      let indicatedValue = comp.salePrice;
+      
+      // Add time adjustment if available
+      if (timeAdjustments) {
+        const timeAdjFactor = Math.pow(1 + timeAdjustments.pctPerMonth, comp.monthsSinceSale || 0);
+        indicatedValue *= timeAdjFactor;
+      }
+      
+      // Add attribute adjustments
+      indicatedValue += subtotal;
+      
+      return {
+        compId: comp.id,
+        lines,
+        subtotal,
+        indicatedValue
+      };
+    });
+    
+    const reconciliation = await this.getReconciliationState(orderId);
+    
+    const bundle: AdjustmentsBundle = {
+      run,
+      compLines,
+      reconciliation
+    };
+    
+    // Save bundle
+    await this.saveAdjustmentsBundle(orderId, bundle);
+    
+    return bundle;
+  }
+
+  async getAdjustmentsBundle(orderId: string): Promise<AdjustmentsBundle | null> {
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'bundle.json');
+    try {
+      const data = await fs.promises.readFile(filePath, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  // Helper methods for adjustments engine
+
+  private async getAdjustmentSettings(orderId: string): Promise<EngineSettings> {
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'settings.json');
+    try {
+      const data = await fs.promises.readFile(filePath, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      return DEFAULT_ENGINE_SETTINGS;
+    }
+  }
+
+  private async saveAdjustmentRun(orderId: string, run: AdjustmentRunResult): Promise<void> {
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'run.json');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(run, null, 2));
+  }
+
+  private async saveAdjustmentsBundle(orderId: string, bundle: AdjustmentsBundle): Promise<void> {
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'adjustments', 'bundle.json');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(bundle, null, 2));
+  }
+
+  private async loadCostBaseline(): Promise<CostBaseline> {
+    const filePath = path.join(process.cwd(), 'data', 'adjustments', 'cost-baseline.json');
+    const data = await fs.promises.readFile(filePath, 'utf-8');
+    return JSON.parse(data);
+  }
+
+  private computeRegressionAdjustment(attr: keyof typeof ATTR_METADATA, comps: CompProperty[], subject: any, basis: 'salePrice' | 'ppsf') {
+    // Mock regression analysis - in reality would use proper OLS
+    const values = comps.map(comp => basis === 'salePrice' ? comp.salePrice : comp.salePrice / (comp.gla || 1));
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+    
+    // Mock coefficient based on attribute type
+    const baseCoeff = {
+      gla: 85, bed: 8500, bath: 12000, garage: 15000, lotSize: 2.5,
+      age: -0.02, quality: 0.08, condition: 0.06, view: 5000, pool: 25000
+    }[attr] || 0;
+    
+    const lo = baseCoeff * 0.8;
+    const hi = baseCoeff * 1.2;
+    
+    return {
+      value: baseCoeff,
+      lo,
+      hi,
+      n: comps.length,
+      r2: 0.65 + Math.random() * 0.25 // Mock R²
+    };
+  }
+
+  private computeCostAdjustment(attr: keyof typeof ATTR_METADATA, costBaseline: CostBaseline, subject: any) {
+    // Use cost baseline values
+    const base = (costBaseline as any)[attr];
+    if (!base) return null;
+    
+    let value = base.base || base;
+    let lo = value * 0.85;
+    let hi = value * 1.15;
+    
+    if (base.range) {
+      lo = base.range[0];
+      hi = base.range[1];
+    }
+    
+    return {
+      value,
+      lo,
+      hi,
+      basisNote: `Cost baseline for ${attr}`
+    };
+  }
+
+  private computePairedAdjustment(attr: keyof typeof ATTR_METADATA, comps: CompProperty[], subject: any) {
+    // Mock paired sales analysis
+    const pairs = comps.filter((_, i) => i < comps.length / 2); // Mock pairing
+    
+    if (pairs.length < 2) return null;
+    
+    // Mock delta calculation
+    const deltas = pairs.map(() => Math.random() * 10000 - 5000);
+    deltas.sort((a, b) => a - b);
+    
+    const median = deltas[Math.floor(deltas.length / 2)];
+    const lo = deltas[0];
+    const hi = deltas[deltas.length - 1];
+    
+    return {
+      value: median,
+      lo,
+      hi,
+      nPairs: pairs.length
+    };
+  }
+
+  private blendEngineResults(weights: any[], engines: any) {
+    let totalWeight = 0;
+    let weightedSum = 0;
+    
+    weights.forEach(w => {
+      const engine = engines[w.engine];
+      if (engine && engine.value !== undefined) {
+        weightedSum += engine.value * w.weight;
+        totalWeight += w.weight;
+      }
+    });
+    
+    return {
+      value: totalWeight > 0 ? weightedSum / totalWeight : 0,
+      source: 'blend' as const
+    };
+  }
+
+  private buildProvenance(attr: string, engines: any): Array<{engine: any; ref: string}> {
+    const provenance = [];
+    
+    if (engines.regression) {
+      provenance.push({ engine: 'regression', ref: `ols-${attr}-${engines.regression.n}comps` });
+    }
+    if (engines.cost) {
+      provenance.push({ engine: 'cost', ref: `baseline-${attr}` });
+    }
+    if (engines.paired) {
+      provenance.push({ engine: 'paired', ref: `pairs-${attr}-${engines.paired.nPairs}` });
+    }
+    
+    return provenance;
+  }
+
+  private calculateAttributeDelta(attr: AttrAdjustment, comp: CompProperty, subject: any): number {
+    const compValue = (comp as any)[attr.key];
+    const subjectValue = (subject as any)[attr.key];
+    
+    if (compValue === undefined || subjectValue === undefined) return 0;
+    
+    return compValue - subjectValue;
+  }
+
+  private buildRationale(attr: AttrAdjustment, delta: number, adjustedDelta: number): string {
+    const sign = delta > 0 ? '+' : '';
+    return `${attr.key.toUpperCase()} ${sign}${delta.toFixed(0)} × $${attr.chosen.value.toFixed(0)}/${attr.unit} = $${adjustedDelta.toFixed(0)}`;
+  }
+
+  private async getReconciliationState(orderId: string): Promise<any> {
+    // Mock reconciliation state - would load from persistent storage
+    const selection = await this.getCompSelection(orderId);
+    
+    return {
+      orderId,
+      primaryCompIds: selection.primary,
+      compLocks: selection.locked,
+      engineSettings: await this.getAdjustmentSettings(orderId),
+      selectedModel: 'salePrice',
+      primaryWeights: [0.6, 0.3, 0.1] // Default weights for primary comps
+    };
   }
 }
 
