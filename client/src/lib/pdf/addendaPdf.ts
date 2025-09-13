@@ -94,6 +94,7 @@ export async function generateAddendaPdf(input: GenerateAddendaInput): Promise<G
       
       if (cell.photoId && photosById[cell.photoId]) {
         await drawPhotoCell(
+          pdfDoc,
           pdfPage, 
           cellRect, 
           photosById[cell.photoId], 
@@ -243,6 +244,7 @@ async function drawWatermark(
  * Draw a photo cell with image and caption
  */
 async function drawPhotoCell(
+  pdfDoc: any,
   page: any,
   cellRect: CellRect,
   photo: PhotoMeta,
@@ -252,10 +254,12 @@ async function drawPhotoCell(
   orderId: string
 ) {
   try {
-    // Choose image variant (blurred or display)
-    const imagePath = photo.processing?.blurredPath || photo.displayPath;
+    // Choose image variant based on user settings
+    const shouldUseBlurred = (options.includeBlurredPhotos !== false) && 
+      photo.processing?.blurredPath;
+    
     const imageUrl = `/api/orders/${orderId}/photos/${photo.id}/file?variant=${
-      photo.processing?.blurredPath ? 'blurred' : 'display'
+      shouldUseBlurred ? 'blurred' : 'display'
     }`;
     
     // Fetch image with auth headers
@@ -274,13 +278,21 @@ async function drawPhotoCell(
     } else {
       const imageBytes = await response.arrayBuffer();
       
-      // Determine image type and embed
+      // Determine image type and embed using Content-Type
       let image;
       try {
-        if (imageUrl.toLowerCase().includes('.png') || imageUrl.toLowerCase().includes('png')) {
-          image = await page.doc.embedPng(imageBytes);
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('image/png')) {
+          image = await pdfDoc.embedPng(imageBytes);
+        } else if (contentType.includes('image/jpeg') || contentType.includes('image/jpg')) {
+          image = await pdfDoc.embedJpg(imageBytes);
         } else {
-          image = await page.doc.embedJpg(imageBytes);
+          // Fallback: try JPEG first, then PNG
+          try {
+            image = await pdfDoc.embedJpg(imageBytes);
+          } catch {
+            image = await pdfDoc.embedPng(imageBytes);
+          }
         }
       } catch (embedError) {
         console.warn(`Failed to embed image ${photo.id}:`, embedError);

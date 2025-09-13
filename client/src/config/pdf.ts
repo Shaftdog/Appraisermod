@@ -9,6 +9,7 @@ export interface PdfExportOptions {
   drawFooter: boolean;                 // default true (page x of y)
   watermark?: { text: string; opacity?: number; size?: number; angleDeg?: number } | null;
   caption: { fontSize: number; maxLines: number }; // default { fontSize: 9, maxLines: 2 }
+  includeBlurredPhotos?: boolean;      // default true - use blurred variants when available
 }
 
 export const DEFAULT_PDF_OPTIONS: PdfExportOptions = {

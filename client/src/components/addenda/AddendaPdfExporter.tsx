@@ -56,7 +56,8 @@ function convertExportSettings(settings: PDFExportSettings): Partial<PdfExportOp
       angleDeg: settings.watermark.position === 'center' ? 45 : 30,
       size: undefined // Use default
     } : null,
-    caption: { fontSize: 9, maxLines: 2 }
+    caption: { fontSize: 9, maxLines: 2 },
+    includeBlurredPhotos: settings.includeBlurredPhotos
   };
 }
 
@@ -92,8 +93,18 @@ export function AddendaPdfExporter({
         }
       };
 
+      // Only include metadata if user enabled it
+      const metaToInclude = settings.includeMetadata ? {
+        title: settings.title,
+        author: settings.author,
+        subject: settings.subject,
+        keywords: settings.keywords
+      } : undefined;
+
+      const inputWithMeta = { ...input, meta: metaToInclude };
+
       // Generate PDF
-      const result = await generateAddendaPdf(input);
+      const result = await generateAddendaPdf(inputWithMeta);
       
       setExportState({ 
         status: 'uploading', 
