@@ -13,9 +13,12 @@ import {
   PhotoGallery,
   PhotoEditorModal,
   PhotosQcBadge,
-  usePhotoSignoffBlock
+  usePhotoSignoffBlock,
+  AddendaPanel
 } from '@/components/photos';
 import { PhotoMeta, PhotoCategory } from '@/types/photos';
+import { useAddenda, usePhotoMap } from '@/hooks/useAddenda';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import * as photoApi from '@/lib/photoApi';
 
 export default function Photos() {
@@ -29,6 +32,7 @@ export default function Photos() {
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<PhotoCategory | 'all'>('all');
   const [editingPhoto, setEditingPhoto] = useState<PhotoMeta | null>(null);
+  const [mobileView, setMobileView] = useState<'gallery' | 'addenda'>('gallery');
 
   const { data: order } = useQuery<Order>({
     queryKey: ['/api/orders', orderId],
@@ -47,6 +51,17 @@ export default function Photos() {
     queryFn: () => photoApi.getPhotosQc(orderId!),
     enabled: !!orderId,
   });
+
+  // Addenda data management
+  const { 
+    addenda, 
+    isLoading: addendaLoading, 
+    save: saveAddenda, 
+    isSaving: addendaSaving, 
+    isDirty: addendaDirty 
+  } = useAddenda(orderId!);
+  
+  const photosById = usePhotoMap(photos);
 
   // Photo mutations
   const deletePhotoMutation = useMutation({
@@ -229,45 +244,126 @@ export default function Photos() {
         </div>
       )}
 
-      {/* Photo Upload and Management */}
+      {/* Desktop: Two-pane layout, Mobile: Tabs */}
       <div className="space-y-6">
-        <PhotoCaptureBar
-          orderId={orderId!}
-          selectedPhotos={selectedPhotos}
-          categoryFilter={categoryFilter}
-          onCategoryFilterChange={setCategoryFilter}
-          onUploadComplete={handleRefresh}
-          onBulkDelete={(photoIds) => {
-            if (confirm(`Delete ${photoIds.length} selected photos?`)) {
-              Promise.all(photoIds.map(id => photoApi.deletePhoto(orderId!, id)))
-                .then(() => {
-                  handleRefresh();
-                  setSelectedPhotos(new Set());
-                })
-                .catch(error => {
-                  toast({
-                    title: "Bulk delete failed",
-                    description: error.message,
-                    variant: "destructive"
-                  });
-                });
-            }
-          }}
-        />
+        {/* Mobile tabs */}
+        <div className="lg:hidden">
+          <Tabs value={mobileView} onValueChange={(value) => setMobileView(value as 'gallery' | 'addenda')}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="gallery">Gallery</TabsTrigger>
+              <TabsTrigger value="addenda">Addenda</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="gallery" className="space-y-6">
+              <PhotoCaptureBar
+                orderId={orderId!}
+                selectedPhotos={selectedPhotos}
+                categoryFilter={categoryFilter}
+                onCategoryFilterChange={setCategoryFilter}
+                onUploadComplete={handleRefresh}
+                onBulkDelete={(photoIds) => {
+                  if (confirm(`Delete ${photoIds.length} selected photos?`)) {
+                    Promise.all(photoIds.map(id => photoApi.deletePhoto(orderId!, id)))
+                      .then(() => {
+                        handleRefresh();
+                        setSelectedPhotos(new Set());
+                      })
+                      .catch(error => {
+                        toast({
+                          title: "Bulk delete failed",
+                          description: error.message,
+                          variant: "destructive"
+                        });
+                      });
+                  }
+                }}
+              />
 
-        <PhotoGallery
-          photos={photos}
-          selectedPhotos={selectedPhotos}
-          categoryFilter={categoryFilter}
-          loading={photosLoading}
-          error={photosError?.message}
-          onPhotoSelect={handlePhotoSelect}
-          onPhotoToggleSelect={handlePhotoToggleSelect}
-          onPhotoEdit={handlePhotoEdit}
-          onPhotoDelete={handlePhotoDelete}
-          onPhotosReorder={handlePhotosReorder}
-          onRefresh={handleRefresh}
-        />
+              <PhotoGallery
+                photos={photos}
+                selectedPhotos={selectedPhotos}
+                categoryFilter={categoryFilter}
+                loading={photosLoading}
+                error={photosError?.message}
+                onPhotoSelect={handlePhotoSelect}
+                onPhotoToggleSelect={handlePhotoToggleSelect}
+                onPhotoEdit={handlePhotoEdit}
+                onPhotoDelete={handlePhotoDelete}
+                onPhotosReorder={handlePhotosReorder}
+                onRefresh={handleRefresh}
+              />
+            </TabsContent>
+            
+            <TabsContent value="addenda">
+              <AddendaPanel
+                orderId={orderId!}
+                addenda={addenda}
+                photosById={photosById}
+                isDirty={addendaDirty}
+                isSaving={addendaSaving}
+                onChange={saveAddenda}
+              />
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        {/* Desktop: Two-pane layout */}
+        <div className="hidden lg:grid lg:grid-cols-2 lg:gap-6">
+          {/* Left: Gallery Panel */}
+          <div className="space-y-6">
+            <h3 className="text-lg font-medium">Photo Gallery</h3>
+            
+            <PhotoCaptureBar
+              orderId={orderId!}
+              selectedPhotos={selectedPhotos}
+              categoryFilter={categoryFilter}
+              onCategoryFilterChange={setCategoryFilter}
+              onUploadComplete={handleRefresh}
+              onBulkDelete={(photoIds) => {
+                if (confirm(`Delete ${photoIds.length} selected photos?`)) {
+                  Promise.all(photoIds.map(id => photoApi.deletePhoto(orderId!, id)))
+                    .then(() => {
+                      handleRefresh();
+                      setSelectedPhotos(new Set());
+                    })
+                    .catch(error => {
+                      toast({
+                        title: "Bulk delete failed",
+                        description: error.message,
+                        variant: "destructive"
+                      });
+                    });
+                }
+              }}
+            />
+
+            <PhotoGallery
+              photos={photos}
+              selectedPhotos={selectedPhotos}
+              categoryFilter={categoryFilter}
+              loading={photosLoading}
+              error={photosError?.message}
+              onPhotoSelect={handlePhotoSelect}
+              onPhotoToggleSelect={handlePhotoToggleSelect}
+              onPhotoEdit={handlePhotoEdit}
+              onPhotoDelete={handlePhotoDelete}
+              onPhotosReorder={handlePhotosReorder}
+              onRefresh={handleRefresh}
+            />
+          </div>
+
+          {/* Right: Addenda Panel */}
+          <div>
+            <AddendaPanel
+              orderId={orderId!}
+              addenda={addenda}
+              photosById={photosById}
+              isDirty={addendaDirty}
+              isSaving={addendaSaving}
+              onChange={saveAddenda}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Photo Editor Modal */}

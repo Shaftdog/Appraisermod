@@ -30,7 +30,7 @@ const DEFAULT_PDF_SETTINGS: PDFExportSettings = {
   title: 'Property Addenda',
   author: 'Appraiser',
   subject: 'Property Photo Documentation',
-  keywords: 'appraisal, photos, property'
+  keywords: ['appraisal', 'photos', 'property']
 };
 
 export function AddendaPanel({
