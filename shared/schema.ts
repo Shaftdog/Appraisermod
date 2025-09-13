@@ -282,6 +282,7 @@ export interface MarketSettings {
   metric: 'salePrice' | 'ppsf';     // trend basis
   smoothing: 'none' | 'ema';        // optional display smoothing
   minSalesPerMonth: number;         // default: 5
+  effectiveDateISO?: string;        // order's effective date; fallback to today
 }
 
 export interface McrMetrics {
@@ -300,6 +301,7 @@ export interface TimeAdjustments {
   orderId: string;
   basis: 'salePrice' | 'ppsf';
   pctPerMonth: number;    // signed decimal (e.g., 0.007 = +0.7%/mo)
+  effectiveDateISO: string; // REQUIRED: order's effective date
   computedAt: string;     // ISO
 }
 
@@ -328,13 +330,15 @@ export const marketSettingsSchema = z.object({
   usePolygon: z.boolean(),
   metric: z.enum(['salePrice', 'ppsf']),
   smoothing: z.enum(['none', 'ema']),
-  minSalesPerMonth: z.number().min(1)
+  minSalesPerMonth: z.number().min(1),
+  effectiveDateISO: z.string().optional()
 });
 
 export const timeAdjustmentsSchema = z.object({
   orderId: z.string(),
   basis: z.enum(['salePrice', 'ppsf']),
   pctPerMonth: z.number(),
+  effectiveDateISO: z.string(),
   computedAt: z.string()
 });
 

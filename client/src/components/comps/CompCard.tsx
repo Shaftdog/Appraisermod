@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { Lock, LockOpen, MapPin, ArrowUp, ArrowUpDown, Zap, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ScoreBar } from "./ScoreBar";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 import { CompProperty, ScoreBand, TimeAdjustments } from "@shared/schema";
+import { calculateTimeAdjustment } from "@shared/timeAdjust";
 import { cn } from "@/lib/utils";
 
 interface CompCardProps {
@@ -48,27 +49,30 @@ export function CompCard({
     maximumFractionDigits: 0,
   }).format(comp.salePrice);
 
-  // Calculate time adjustment
-  const calculateTimeAdjustment = () => {
-    if (!timeAdjustments) return null;
+  // Calculate time adjustment using proper utilities and effective date
+  const timeAdjustment = useMemo(() => {
+    if (!timeAdjustments || !timeAdjustments.effectiveDateISO) return null;
     
-    const monthsOld = Math.round((Date.now() - saleDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
-    const adjustment = monthsOld * timeAdjustments.pctPerMonth;
-    const adjustedPrice = comp.salePrice * (1 + adjustment);
-    
+    const result = calculateTimeAdjustment(
+      comp.salePrice,
+      comp.saleDate,
+      comp.gla,
+      timeAdjustments.effectiveDateISO,
+      timeAdjustments.pctPerMonth,
+      timeAdjustments.basis
+    );
+
+    // Always add formatting and effective date
     return {
-      monthsOld,
-      adjustmentPercent: adjustment * 100,
-      adjustedPrice,
-      formattedAdjustedPrice: new Intl.NumberFormat("en-US", {
+      ...result,
+      formattedAdjustedPrice: result.adjustedPrice ? new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: "USD",
         maximumFractionDigits: 0,
-      }).format(adjustedPrice)
+      }).format(result.adjustedPrice) : null,
+      effectiveDate: new Date(timeAdjustments.effectiveDateISO).toLocaleDateString()
     };
-  };
-
-  const timeAdjustment = calculateTimeAdjustment();
+  }, [comp, timeAdjustments]);
 
   // Determine score band if not provided
   const scoreBand: ScoreBand = comp.band || 
@@ -147,13 +151,47 @@ export function CompCard({
                   {formattedPrice}
                 </span>
                 {timeAdjustment && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-blue-600 dark:text-blue-400 font-medium">
-                      {timeAdjustment.formattedAdjustedPrice}
-                    </span>
-                    <Badge variant="outline" className="text-xs px-1 py-0">
-                      {timeAdjustment.adjustmentPercent > 0 ? '+' : ''}{timeAdjustment.adjustmentPercent.toFixed(1)}%
-                    </Badge>
+                  <div className="flex items-center gap-2 text-xs flex-wrap">
+                    {timeAdjustment.adjustedPrice ? (
+                      <>
+                        <span className="text-blue-600 dark:text-blue-400 font-medium">
+                          {timeAdjustment.formattedAdjustedPrice}
+                        </span>
+                        <Badge variant="outline" className="text-xs px-1 py-0">
+                          {timeAdjustment.adjustmentPercent > 0 ? '+' : ''}{timeAdjustment.adjustmentPercent.toFixed(1)}%
+                        </Badge>
+                        {timeAdjustment.basis === 'ppsf' && 'originalPpsf' in timeAdjustment && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="secondary" className="text-xs px-1 py-0">
+                                  $/SF: ${timeAdjustment.originalPpsf.toFixed(0)} → ${timeAdjustment.adjustedPpsf?.toFixed(0)}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Adjusted on $/SF basis using {timeAdjustment.gla} SF</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                        <Badge variant="outline" className="text-xs px-1 py-0 text-gray-500">
+                          Eff: {timeAdjustment.effectiveDate}
+                        </Badge>
+                      </>
+                    ) : timeAdjustment.error ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="text-xs px-1 py-0 text-orange-600">
+                              $/SF: GLA req'd
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{timeAdjustment.error}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : null}
                   </div>
                 )}
               </div>
