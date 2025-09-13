@@ -272,3 +272,191 @@ export const compSwapSchema = z.object({
   targetIndex: z.number().int().min(0).max(2),
   confirm: z.boolean().optional()
 });
+
+// Photos Module Types
+export type PhotoCategory =
+  | 'exteriorFront' | 'exteriorLeft' | 'exteriorRight' | 'exteriorRear'
+  | 'street' | 'addressUnit'
+  | 'kitchen' | 'bath' | 'living' | 'bedroom'
+  | 'mechanical' | 'deficiency' | 'viewWaterfront' | 'outbuilding' | 'other';
+
+export interface PhotoExif {
+  takenAt?: string;      // ISO datetime
+  gps?: { lat: number; lng: number; };
+  orientation?: number;
+  camera?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface BlurRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  radius?: number;
+}
+
+export interface BlurBrushStroke {
+  points: Array<{x: number; y: number}>;
+  radius: number;
+  strength: number;
+}
+
+export interface FaceDetection {
+  type: 'face';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  accepted: boolean;
+  confidence?: number;
+}
+
+export interface PhotoMasks {
+  rects: BlurRect[];
+  brush: BlurBrushStroke[];
+  autoDetections?: FaceDetection[];
+}
+
+export interface PhotoProcessing {
+  blurredPath?: string;  // generated from displayPath + masks
+  lastProcessedAt?: string;
+  processingStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+}
+
+export interface PhotoMeta {
+  id: string;
+  orderId: string;
+  originalPath: string;    // /data/orders/<id>/photos/original/<id>.jpg
+  displayPath: string;     // /data/orders/<id>/photos/display/<id>.jpg
+  thumbPath: string;       // /data/orders/<id>/photos/thumb/<id>.jpg
+  width: number;
+  height: number;
+  fileSize: number;        // bytes
+  mimeType: string;        // image/jpeg, image/png, etc.
+  exif?: PhotoExif;
+  category?: PhotoCategory;
+  caption?: string;
+  masks?: PhotoMasks;
+  processing?: PhotoProcessing;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AddendaLayout = '2up' | '4up' | '6up';
+
+export interface AddendaCell {
+  photoId?: string;
+  caption?: string;
+}
+
+export interface AddendaPage {
+  id: string;
+  layout: AddendaLayout;
+  cells: AddendaCell[];
+  title?: string;
+}
+
+export interface PhotoAddenda {
+  orderId: string;
+  pages: AddendaPage[];
+  updatedAt: string;
+  exportedPdfPath?: string;
+}
+
+export interface PhotosQcSummary {
+  requiredPresent: boolean;
+  missingCategories: PhotoCategory[];
+  unresolvedDetections: number; // auto faces not reviewed
+  status: 'green' | 'yellow' | 'red';
+  photoCount: number;
+  categoryCounts: Record<PhotoCategory, number>;
+}
+
+// Photo Zod Schemas for API Validation
+export const photoCategorySchema = z.enum([
+  'exteriorFront', 'exteriorLeft', 'exteriorRight', 'exteriorRear',
+  'street', 'addressUnit',
+  'kitchen', 'bath', 'living', 'bedroom',
+  'mechanical', 'deficiency', 'viewWaterfront', 'outbuilding', 'other'
+]);
+
+export const addendaLayoutSchema = z.enum(['2up', '4up', '6up']);
+
+export const photoExifSchema = z.object({
+  takenAt: z.string().optional(),
+  gps: z.object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180)
+  }).optional(),
+  orientation: z.number().int().min(1).max(8).optional(),
+  camera: z.string().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional()
+}).optional();
+
+export const blurRectSchema = z.object({
+  x: z.number().min(0),
+  y: z.number().min(0),
+  w: z.number().positive(),
+  h: z.number().positive(),
+  radius: z.number().positive().optional()
+});
+
+export const blurBrushStrokeSchema = z.object({
+  points: z.array(z.object({
+    x: z.number(),
+    y: z.number()
+  })),
+  radius: z.number().positive(),
+  strength: z.number().min(0).max(1)
+});
+
+export const faceDetectionSchema = z.object({
+  type: z.literal('face'),
+  x: z.number().min(0),
+  y: z.number().min(0),
+  w: z.number().positive(),
+  h: z.number().positive(),
+  accepted: z.boolean(),
+  confidence: z.number().min(0).max(1).optional()
+});
+
+export const photoMasksSchema = z.object({
+  rects: z.array(blurRectSchema),
+  brush: z.array(blurBrushStrokeSchema),
+  autoDetections: z.array(faceDetectionSchema).optional()
+});
+
+export const photoUpdateSchema = z.object({
+  category: photoCategorySchema.optional(),
+  caption: z.string().max(500).optional(),
+  masks: photoMasksSchema.optional()
+});
+
+export const addendaCellSchema = z.object({
+  photoId: z.string().optional(),
+  caption: z.string().max(200).optional()
+});
+
+export const addendaPageSchema = z.object({
+  id: z.string(),
+  layout: addendaLayoutSchema,
+  cells: z.array(addendaCellSchema),
+  title: z.string().max(100).optional()
+});
+
+export const photoAddendaSchema = z.object({
+  orderId: z.string(),
+  pages: z.array(addendaPageSchema),
+  updatedAt: z.string()
+});
+
+export const bulkPhotoUpdateSchema = z.object({
+  photoIds: z.array(z.string().min(1)),
+  updates: z.object({
+    category: photoCategorySchema.optional(),
+    captionPrefix: z.string().max(100).optional()
+  })
+});
