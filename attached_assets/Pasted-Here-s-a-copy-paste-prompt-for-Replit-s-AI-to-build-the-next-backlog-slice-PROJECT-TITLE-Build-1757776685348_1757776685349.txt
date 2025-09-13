@@ -1,0 +1,279 @@
+Here’s a copy‑paste prompt for Replit’s AI to build the next backlog slice:
+
+⸻
+
+PROJECT TITLE:
+Build “Photos Module” (Next.js + TypeScript) — Photo capture flow; auto‑blurring; page builder for photo addenda
+
+GOAL:
+Add a complete Photos experience to the existing Order UI that lets users (desktop & mobile) 1) capture or upload inspection photos, 2) auto‑detect faces and apply blur/redaction with manual tools, 3) organize photos into addenda pages (2/4/6‑per page) with captions, and 4) export the addenda as print‑ready PDF pages. Use mock APIs with JSON persistence. Keep code production‑quality and ready to wire to a real backend later.
+
+⸻
+
+Tech & Conventions
+	•	Framework: Next.js 14+ (App Router) + TypeScript
+	•	Styling: Tailwind CSS (reuse existing config)
+	•	Accessibility: All actions keyboard‑operable; screen‑reader labels; no color‑only meaning
+	•	Image libs (MIT or similar):
+	•	exifr (EXIF read: orientation, GPS, timestamp)
+	•	browser-image-compression (initial downscale/quality) or Canvas pipeline
+	•	@vladmandic/face-api (face detection; lazy‑loaded models from /public/models/faceapi/)
+	•	pdf-lib or jspdf + html2canvas for PDF export (MIT)
+	•	Optional (if simple): fabric or konva for blur editor overlay; otherwise Canvas + custom handles
+	•	State & API: React state + mock API routes under app/api that read/write JSON and image files under /data/orders/<id>/photos
+	•	Workers: Use a Web Worker for heavy image processing (blur/redaction) to keep UI responsive
+
+⸻
+
+Feature Scope (this sprint)
+
+1) Photo Capture & Upload (desktop + mobile)
+
+Requirements
+	•	Capture via <input type="file" accept="image/*" capture="environment"> for mobile; allow multi‑select upload on desktop
+	•	Live preview grid with thumbnail, filename, size, EXIF timestamp, GPS badge if present
+	•	EXIF handling: auto‑rotate orientation; extract DateTimeOriginal, GPSLatitude/Longitude
+	•	Compression/resize: create a display derivative (~1920px long edge, 85% quality) while storing original; generate a thumbnail (~320px)
+	•	Category tagging (select): Exterior Front, Left, Right, Rear, Street, Address/Unit#, Kitchen, Bath, Living/Family, Bedroom, Mechanical/Utilities, Deficiencies/Repairs, View/Waterfront, Outbuildings, Other
+	•	QC counts per category with RYG chip: Red if required category missing (Exterior Front/Street/Kitchen/Bath/Living by default), Yellow if optional missing, Green if all required present
+
+UX
+	•	Drag‑and‑drop reorder within the gallery
+	•	Bulk actions: assign category, add caption prefix, delete
+	•	“Use Camera” button (mobile) triggers direct capture (same input)
+
+⸻
+
+2) Auto‑Blurring + Manual Redaction
+
+Detection
+	•	Auto face detection using @vladmandic/face-api (SSD Mobilenet or TinyFaceDetector):
+	•	Load models lazily from /public/models/faceapi/
+	•	Draw suggested blur boxes; user can accept/reject per box
+	•	Manual tools (always available):
+	•	Box Blur: draw/resize/move rectangles to blur
+	•	Brush Blur: adjustable radius/strength; paint over regions
+	•	License plates & sensitive symbols: manual redaction using tools above (no complex plate detection required this sprint)
+
+Processing
+	•	Blur runs in a Web Worker on the display derivative; we keep original unchanged
+	•	Persist mask definitions (rects/brush strokes) in JSON so edits are non‑destructive; regenerate processed image on export
+
+UI
+	•	“Edit & Blur” modal with:
+	•	Image canvas (pinch‑zoom on mobile, wheel zoom on desktop), pan with space+drag
+	•	Toolbar: Select/Move, Box, Brush, Undo/Redo, Apply, Reset suggestions, Save
+	•	Sidebar list of Detections (Face #1, Face #2…) with toggles
+	•	Before/after toggle
+	•	Performance: throttle redraw; use requestAnimationFrame
+
+⸻
+
+3) Photo Addenda Page Builder
+
+Layouts
+	•	Prebuilt templates: 2‑per page, 4‑per page, 6‑per page (uniform cells), with caption under each cell
+	•	Drag from gallery onto a page cell; cells show index number (1..N)
+	•	Multi‑page support: add/remove pages, reorder pages (drag‑handle)
+	•	Captions: inline editable text with character counter; default from category + address snippet; allow custom
+
+Export
+	•	PDF Export button: generate 300 DPI‑ish pages (target visually sharp for print)
+	•	Either: render page DOM with html2canvas then assemble with jspdf
+	•	Or: draw to a high‑res offscreen Canvas and use pdf-lib
+	•	Each photo placed is the blurred derivative (apply masks), not the original
+	•	Save produced PDF file to /data/orders/<id>/photos/addenda.pdf and expose a download link in UI
+
+Addenda metadata
+	•	Persist page structure: pages[], each with cells[] {photoId, caption}, layout type
+
+⸻
+
+4) QC & Sign‑Off tie‑ins (light)
+	•	Show RYG chip on Photos tab header (computed from required categories + unresolved blur suggestions)
+	•	Sign‑off panel: prevent sign‑off if any required photo category is missing or if “auto‑detected faces not reviewed” remains; allow override with reason (reuse existing sign‑off pattern)
+
+⸻
+
+Data & Types
+
+Create/extend in types/photos.ts:
+
+export type PhotoCategory =
+  | 'exteriorFront' | 'exteriorLeft' | 'exteriorRight' | 'exteriorRear'
+  | 'street' | 'addressUnit'
+  | 'kitchen' | 'bath' | 'living' | 'bedroom'
+  | 'mechanical' | 'deficiency' | 'viewWaterfront' | 'outbuilding' | 'other';
+
+export interface PhotoMeta {
+  id: string;
+  orderId: string;
+  originalPath: string;    // /data/orders/<id>/photos/original/<id>.jpg
+  displayPath: string;     // /data/orders/<id>/photos/display/<id>.jpg
+  thumbPath: string;       // /data/orders/<id>/photos/thumb/<id>.jpg
+  width: number; height: number;
+  exif?: {
+    takenAt?: string;      // ISO
+    gps?: { lat: number; lng: number; };
+    orientation?: number;
+  };
+  category?: PhotoCategory;
+  caption?: string;
+  masks?: {
+    rects: Array<{ x: number; y: number; w: number; h: number; radius?: number }>;
+    brush: Array<{ points: Array<{x:number;y:number}>; radius: number; strength: number }>;
+    autoDetections?: Array<{ type: 'face'; x:number; y:number; w:number; h:number; accepted: boolean }>;
+  };
+  processing?: {
+    blurredPath?: string;  // generated from displayPath + masks
+    lastProcessedAt?: string;
+  };
+  createdAt: string; updatedAt: string;
+}
+
+export type AddendaLayout = '2up' | '4up' | '6up';
+
+export interface AddendaCell { photoId?: string; caption?: string; }
+
+export interface AddendaPage {
+  id: string;
+  layout: AddendaLayout;
+  cells: AddendaCell[];
+}
+
+export interface PhotoAddenda {
+  orderId: string;
+  pages: AddendaPage[];
+  updatedAt: string;
+}
+
+export interface PhotosQcSummary {
+  requiredPresent: boolean;
+  missingCategories: PhotoCategory[];
+  unresolvedDetections: number; // auto faces not reviewed
+  status: 'green' | 'yellow' | 'red';
+}
+
+Seed directories & files
+	•	/data/orders/123/photos/original/ /display/ /thumb/ (create on first upload)
+	•	/data/orders/123/photos/photos.json → array of PhotoMeta
+	•	/data/orders/123/photos/addenda.json → PhotoAddenda
+	•	/data/orders/123/photos/addenda.pdf (export result)
+	•	/public/models/faceapi/ → model files (TinyFaceDetector or SSD). If models are too heavy, stub auto‑detect and ensure manual tools still work.
+
+⸻
+
+Mock API Routes
+
+Under app/api/orders/[id]/photos/…:
+	•	GET /api/orders/:id/photos → list PhotoMeta[]
+	•	POST /api/orders/:id/photos/upload → multipart/form-data; save original; create display+thumb; read EXIF; return PhotoMeta
+	•	PUT /api/orders/:id/photos/:photoId → update category/caption/exif corrections
+	•	POST /api/orders/:id/photos/:photoId/masks → set/merge masks JSON
+	•	POST /api/orders/:id/photos/:photoId/process → apply masks to display image in a worker; write blurredPath
+	•	DELETE /api/orders/:id/photos/:photoId → remove photo and derivatives; update JSON
+
+Addenda:
+	•	GET /api/orders/:id/photos/addenda → PhotoAddenda
+	•	PUT /api/orders/:id/photos/addenda → upsert pages/cells
+	•	POST /api/orders/:id/photos/addenda/export → generate PDF; return { pdfPath }
+
+QC:
+	•	GET /api/orders/:id/photos/qc → PhotosQcSummary
+
+Server‑side notes
+	•	Use Node fs/promises to persist JSON and image files under /data/orders/<id>/photos/
+	•	Validate file type (image/jpeg|png|webp), size limits, and sanitize filenames
+
+⸻
+
+Components to Build
+	•	components/photos/PhotoCaptureBar.tsx
+	•	Buttons: Upload (input), Use Camera (same input), category quick‑assign dropdown
+	•	components/photos/PhotoGallery.tsx
+	•	Thumbnail grid; drag‑reorder; per‑item context menu (Edit & Blur, Category, Caption, Delete)
+	•	components/photos/PhotoEditorModal.tsx
+	•	Canvas with zoom/pan; toolbar for Box/Brush; list of auto detections with toggles; Apply/Save
+	•	components/photos/BlurWorker.ts (Web Worker)
+	•	Receives {image, rects, brush}; applies Gaussian blur (approx via multi‑pass box blur) and returns blob
+	•	components/photos/AddendaBuilder.tsx
+	•	Pages list with add/remove/reorder; page canvas with drop zones; cell caption editor; layout selector (2/4/6‑up)
+	•	components/photos/AddendaExportBar.tsx
+	•	PDF Export button; progress indicator; download link
+	•	components/photos/PhotosQcBadge.tsx
+	•	R/Y/G with tooltip listing missing categories/unresolved detections
+
+Utilities
+	•	lib/image/exif.ts (EXIF read + orientation fix via canvas)
+	•	lib/image/resize.ts (downscale + jpeg/webp encode)
+	•	lib/image/blur.ts (rectangle + brush masks compositing; shared with worker)
+	•	lib/pdf/export.ts (render DOM or canvas to PDF)
+	•	lib/photos/required.ts (required categories set + QC status)
+
+⸻
+
+UI/UX Details
+	•	Photos tab layout:
+	•	Top toolbar: Capture/Upload, bulk actions, QC badge, Sign‑off (reuses global)
+	•	Left: Gallery (thumbnails; filter by category)
+	•	Right: Addenda Builder (pages & cells)
+	•	Mobile: toggle Gallery / Addenda with tabs; editor modal full‑screen
+	•	Auto‑detect flow: after upload, run face detection (if models loaded) → show “Detections available – Review” chip on thumbnail; clicking opens editor with suggested boxes toggled on by default
+	•	Performance: generate display+thumb off the main thread when possible; defer face detection until idle (requestIdleCallback) to avoid jank after bulk upload
+
+⸻
+
+Acceptance Criteria (demo checklist)
+	•	Upload and camera capture work on desktop & mobile; previews show with EXIF date and GPS badge
+	•	Images auto‑rotate based on EXIF; display and thumb derivatives are created and persisted
+	•	Categories can be assigned (single and bulk); captions editable; RYG chip reflects required photo presence
+	•	“Edit & Blur” modal: auto face detections present (if models available); user can accept/reject; Box and Brush tools work; Save regenerates blurred derivative and persists masks
+	•	Non‑destructive editing: reopening the editor shows prior masks; Reset removes masks; original remains unchanged
+	•	Addenda builder: 2/4/6‑up layouts; drag photos into cells; captions saved; add/remove/reorder pages
+	•	PDF export generates a file with the blurred variants, correct layout and captions; download link appears; file saved under /data/orders/<id>/photos/addenda.pdf
+	•	QC endpoint marks Red if required categories missing or detections not reviewed; sign‑off blocks until resolved or overridden with reason
+	•	All state persists across refresh; ideally survives dev server restart (JSON files updated)
+
+⸻
+
+Manual Test Script (copy/paste)
+	1.	Open /orders/123 → Photos tab.
+	2.	Upload 6–10 images (mix of people/rooms); confirm previews, EXIF date, GPS badge if present.
+	3.	Open Edit & Blur on an image with a face → accept suggested boxes; draw a manual Box over a license plate; paint with Brush on a photo frame; Save → thumbnail shows blurred regions.
+	4.	Reopen editor → verify boxes/brush strokes are intact; Reset suggestions restores auto boxes; Undo/Redo works in session.
+	5.	Assign categories (Exterior Front, Street, Kitchen, Bath, Living, etc.) → QC badge flips to Green when required categories complete.
+	6.	Drag photos onto Addenda pages (4‑up & 6‑up) and edit captions; add a second page and reorder pages; Export PDF → open/download to verify layout & blur applied.
+	7.	Refresh the page → gallery, masks, categories, addenda structure, and PDF link persist.
+	8.	Delete a photo → removed from gallery and any addenda cell referencing it becomes empty.
+	9.	Mobile test: capture via camera, open editor full‑screen, pinch‑zoom, brush blur, save.
+	10.	Try Sign‑off with a required category missing → blocked with message; add the missing photo → sign‑off allowed.
+
+⸻
+
+Setup Notes
+	•	Install libs:
+
+npm i exifr browser-image-compression @vladmandic/face-api jspdf html2canvas pdf-lib classnames
+
+
+	•	Place face‑api model files under /public/models/faceapi/ and lazy‑load in the editor; if models are too heavy, implement a graceful fallback: skip auto‑detect and show a banner “Auto‑detect unavailable; use manual blur tools.”
+	•	Add Next.js route handlers that write images/JSON under /data/orders/<id>/photos/ (create directories on demand).
+
+⸻
+
+Non‑Goals (this sprint)
+	•	No OCR or automatic license‑plate detection (manual tools only)
+	•	No cloud storage integration (local /data only)
+	•	No advanced vision (object classification); only faces auto‑detect
+
+⸻
+
+Quality Bar
+	•	Strong TypeScript types and prop contracts
+	•	Smooth, responsive editor (no main‑thread stalls during processing)
+	•	Accessible modals/toolbars; keyboard shortcuts for tools if easy (B for Box, R for Brush)
+	•	Clean separation of concerns (gallery, editor, builder, export, workers)
+
+⸻
+
+Deliver exactly this slice, fully integrated into the existing Photos tab with persistence and export.
