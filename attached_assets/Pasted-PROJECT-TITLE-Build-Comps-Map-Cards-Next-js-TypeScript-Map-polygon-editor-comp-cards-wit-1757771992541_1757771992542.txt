@@ -1,0 +1,421 @@
+PROJECT TITLE:
+Build “Comps Map & Cards” (Next.js + TypeScript) — Map polygon editor; comp cards with score breakdown; comp swap/lock buttons
+
+GOAL:
+Extend the existing Comps tab to add:
+
+An interactive map with a polygon editor to define the market area,
+
+Comp cards that display scores with a breakdown tooltip/panel,
+
+Swap/Lock actions for managing the primary comp set (#1–#3) vs. the candidate pool.
+Use mock APIs and mock data; keep it frontend‑only but production‑quality and ready to wire to a real backend later.
+
+Tech & Conventions
+
+Framework: Next.js 14+ (App Router) + TypeScript + Tailwind CSS
+
+Map stack: React‑Leaflet + Leaflet + leaflet‑draw (no API token required)
+
+Add CSS imports for Leaflet & Leaflet‑Draw (see below).
+
+Use dynamic import (SSR off) for map component.
+
+Geo utils: @turf/turf for point‑in‑polygon, area, distance helpers.
+
+State & API: React state + mock API routes under app/api that read/write JSON in /data.
+
+A11y: Keyboard & screen‑reader accessible; don’t rely on color alone.
+
+Integrations / Assumptions
+
+Reuse Comps tab from prior sprints (Order shell, Weights panel, Comp list).
+
+Reuse lib/scoring.ts from the previous slice for score calculations.
+
+Subject and comps have lat/lng in the mocks. If not present, seed them now.
+
+Feature Scope (this sprint)
+1) Map Polygon Editor (Market Area)
+
+Add an interactive map to the Comps tab with the ability to draw/edit/delete a polygon that defines the market area.
+
+Requirements
+
+Map shows:
+
+Subject marker (distinct icon).
+
+Comp markers (candidate comps), colored by score band (e.g., High/Med/Low).
+
+The market polygon if present.
+
+Draw tools: polygon draw, edit vertices, delete polygon.
+
+Toolbar controls:
+
+Toggle “Restrict to polygon” (on = only show/filter comps inside polygon).
+
+Button “Save Polygon” → persists to mock API.
+
+Button “Clear Polygon” → removes polygon after confirm.
+
+Live stats (small footer on the map): N comps in polygon / total, polygon area (acres).
+
+Persistence
+
+GET /api/orders/:id/market/polygon → returns GeoJSON Polygon or null.
+
+PUT /api/orders/:id/market/polygon → saves polygon GeoJSON.
+
+DELETE /api/orders/:id/market/polygon → clears polygon.
+
+Behavior
+
+When “Restrict to polygon” is on, the candidate list & map markers must filter to comps inside the polygon (point‑in‑polygon via turf).
+
+Primary comps that fall outside the polygon should show a warning badge on their cards, but remain selected unless user acts.
+
+2) Comp Cards with Score Breakdown
+
+Replace the simple comp list with cards that show key facts and a transparent breakdown.
+
+Card content
+
+Header: Address, price, sale date (elapsed months), distance (mi), “inside polygon” badge if applicable.
+
+Middle: Score (0–100) with a visual bar and a “Breakdown” toggle.
+
+Breakdown panel (expandable):
+
+Show each factor’s normalized weight % & similarity (S_dist, S_time, S_gla, S_qual, S_cond) and contribution (w_i * S_i).
+
+Show constraint values in tooltips (GLA tolerance %, distance cap).
+
+Footer actions:
+
+Promote/Swap (see next section),
+
+Lock/Unlock toggle (icon + label),
+
+“View on Map” (center & bounce marker).
+
+Score bands (for marker color & chip)
+
+High (≥ 0.75), Medium (0.50–0.74), Low (< 0.50).
+
+Use labels/icons in addition to color.
+
+3) Primary Comp Set + Swap/Lock
+
+Implement a Primary Comp Tray (fixed panel above or beside candidates) containing up to 3 primary comps: #1, #2, #3.
+
+Actions
+
+Promote to Primary (from a candidate card):
+
+If a slot is empty → fill it.
+
+If all 3 are filled → open a Swap dialog: “Replace #1 / #2 / #3?”
+
+Swap (from candidate or within tray): choose which primary index to replace.
+
+Lock (toggle on card, both in tray and candidates):
+
+Locked comps cannot be auto‑replaced by re‑ranking or bulk actions.
+
+Show a lock icon on the card and disable “Promote/Swap away” unless explicitly confirmed.
+
+Re‑ranking (when weights change) must not drop a locked primary comp; it stays pinned in its slot, but we still recompute & show its score.
+
+Badges / warnings
+
+If a primary comp is outside polygon, show a red/yellow badge “Outside market polygon” with a tooltip; leave it to user to replace or keep.
+
+If a comp is locked, show a lock badge.
+
+Persistence
+
+Primary set & locks must persist to JSON via mock APIs.
+
+Data & Types
+
+Create/extend types in types/comps.ts:
+
+export interface LatLng { lat: number; lng: number; }
+
+export type ScoreBand = 'high' | 'medium' | 'low';
+
+export interface Comp {
+  id: string;
+  address: string;
+  price: number;
+  saleDate: string;          // ISO
+  monthsSinceSale: number;
+  latlng: LatLng;
+  distMiles: number;         // precomputed or compute on FE
+  GLAcomp: number;
+  Qualcomp: number;          // ordinal 1..5 (example)
+  Condcomp: number;          // ordinal 1..5
+  locked?: boolean;
+  isPrimary?: boolean;
+  primaryIndex?: 0 | 1 | 2;
+  score?: number;            // 0..1
+  band?: ScoreBand;
+  components?: {
+    S_dist: number; S_time: number; S_gla: number; S_qual: number; S_cond: number;
+    w_dist: number; w_time: number; w_gla: number; w_qual: number; w_cond: number;
+  };
+}
+
+export interface MarketPolygon {
+  type: 'Feature';
+  geometry: { type: 'Polygon'; coordinates: number[][][]; };
+  properties?: Record<string, any>;
+}
+
+export interface Subject {
+  id: string;
+  address: string;
+  latlng: LatLng;
+  GLAsubj: number;
+  Qualsubj: number;
+  Condsubj: number;
+}
+
+
+Seed data (in /data):
+
+subject-123.json → subject lat/lng & attributes.
+
+comps-sample.json → 10–15 comps with lat/lng and fields above.
+
+order-comps-123.json →
+
+{
+  "orderId": "123",
+  "primary": ["comp_04","comp_07","comp_02"],   // ids
+  "locked": ["comp_07"],                        // ids
+  "restrictToPolygon": true
+}
+
+
+market-polygon-123.json → saved polygon or null.
+
+Mock API Routes
+
+Under app/api/ implement handlers that read/write JSON files:
+
+Subject
+
+GET /api/orders/:id/subject → Subject
+
+Polygon
+
+GET /api/orders/:id/market/polygon → MarketPolygon | null
+
+PUT /api/orders/:id/market/polygon → body { polygon: MarketPolygon }
+
+DELETE /api/orders/:id/market/polygon
+
+Comps
+
+GET /api/orders/:id/comps
+
+Returns raw comps AND a computed isInsidePolygon flag (if polygon exists).
+
+Optionally compute distMiles from subject if not present.
+
+GET /api/orders/:id/comps/scored
+
+Returns the scored & sorted candidate list (apply weights from prior /api/orders/:id/weights)
+
+Include components and band for each comp.
+
+Optionally filter by restrictToPolygon server‑side.
+
+GET /api/orders/:id/comps/selection
+
+Returns { primary: string[]; locked: string[]; restrictToPolygon: boolean }
+
+PUT /api/orders/:id/comps/selection
+
+Body may include any of: { primary?: string[]; locked?: string[]; restrictToPolygon?: boolean }
+
+POST /api/orders/:id/comps/lock
+
+Body { compId: string, locked: boolean }
+
+POST /api/orders/:id/comps/swap
+
+Body { candidateId: string, targetIndex: 0|1|2 }
+
+Enforce lock rules (if the target primary is locked, require confirm: true)
+
+Validate indices & ids; return 400 on errors with clear messages.
+
+Components to Build
+
+components/map/MarketMap.tsx
+
+Dynamic import (ssr:false) using react-leaflet.
+
+Imports CSS: leaflet/dist/leaflet.css, leaflet-draw/dist/leaflet.draw.css (in the component or in global layout).
+
+Shows subject marker, comp markers (colored by band), and polygon draw/edit/delete via leaflet-draw.
+
+Props:
+
+interface MarketMapProps {
+  subject: Subject;
+  comps: Comp[];
+  polygon: MarketPolygon | null;
+  restrictToPolygon: boolean;
+  onSavePolygon(p: MarketPolygon | null): void;
+  onToggleRestrict(v: boolean): void;
+  onFocusComp(id: string): void; // center map and bounce marker
+}
+
+
+components/comps/PrimaryCompTray.tsx
+
+Shows slots #1, #2, #3; each slot renders a compact CompCard with lock toggle & “Replace” control.
+
+components/comps/CompCard.tsx
+
+Detailed card with header facts, score bar, Breakdown accordion, Lock toggle, Promote/Swap button, View on Map.
+
+Emits events: onLock, onPromote, onSwap, onFocus.
+
+components/comps/SwapDialog.tsx
+
+Choose which primary index to replace; show warnings if locked target; require confirm text if replacing a locked one.
+
+components/comps/ScoreBar.tsx
+
+Visual bar from 0–100; color by band (with label).
+
+components/comps/ScoreBreakdown.tsx
+
+Table: factor, weight %, similarity, contribution; tooltips for constraints.
+
+lib/geo.ts
+
+Helpers: distanceMiles(a: LatLng, b: LatLng), isInsidePolygon(point: LatLng, poly: MarketPolygon), polygonAreaAcres(poly).
+
+Update lib/scoring.ts if needed to export factor components for the breakdown.
+
+UI/UX Details
+
+Layout (desktop):
+
+Two‑column: Map on the left (60%), Primary Tray above Candidate Cards on the right (40%).
+
+Layout (mobile):
+
+Map collapses to a toggle “Show Map / Show Comps”; tray stays on top of candidates.
+
+Markers:
+
+Subject = star icon; comps = circle icons color‑coded by band and with a small label (# if in primary).
+
+Legend: small legend for band colors; add labels.
+
+Warnings: outside‑polygon badge; lock badge; tooltip explaining effects.
+
+Keyboard: all buttons, dialogs, and toggles operable with keyboard; focus styles visible.
+
+Wiring in the Comps Tab
+
+Fetch on load: subject, polygon, selection, and scored comps.
+
+If “Restrict to polygon” is on: hide candidates outside; always show primary (even if outside) with warning.
+
+Promote/Swap updates selection via API, then re‑fetch or update state.
+
+Lock/Unlock updates lock list via API.
+
+“View on Map” recenters/zooms to the comp and briefly animates the marker (e.g., bounce/pulse class).
+
+Acceptance Criteria (demo checklist)
+
+ Map renders with subject + comp markers; polygon can be drawn, edited, deleted.
+
+ “Restrict to polygon” toggle filters candidates live; counts & area display update.
+
+ Saving/clearing polygon persists to /data/market-polygon-123.json.
+
+ Candidate CompCards show score, band, and a Breakdown with factor contributions.
+
+ Primary Comp Tray shows 3 slots; Promote fills an empty slot; when full, SwapDialog lets you replace #1/#2/#3.
+
+ Lock toggle prevents silent replacement; attempting to replace a locked primary requires explicit confirmation.
+
+ Re‑ranking (if weights changed from previous sprint) does not auto‑drop locked primaries; their scores recompute but they stay pinned.
+
+ Outside‑polygon primaries show a warning badge; candidates outside are hidden when restriction is on.
+
+ “View on Map” recenters and highlights the selected comp.
+
+ State persists across refresh (and ideally across server restart).
+
+Manual Test Script (copy/paste)
+
+Open /orders/123 → Comps tab. Confirm map + tray + candidate cards are visible.
+
+Click Draw polygon, outline the immediate area → Save Polygon. Footer shows area + “X inside / Y total”.
+
+Toggle Restrict to polygon ON → candidate list shrinks to inside‑polygon comps.
+
+Open a Breakdown on a card; verify weights, similarities, and contributions sum logically.
+
+Click Promote on a candidate → fills #1. Promote two more to fill #2 and #3.
+
+Try Promote a fourth candidate → SwapDialog appears; choose Replace #2 → tray updates.
+
+Lock #1 in the tray; attempt to swap it → dialog requires explicit confirm; cancel → #1 remains.
+
+Toggle Restrict to polygon OFF → all candidates reappear; tray unchanged.
+
+Click View on Map on a candidate → map recenters and highlights the marker.
+
+Delete polygon → confirm → markers return to full set; counts reset; refresh page → polygon remains cleared.
+
+Setup Notes
+
+Install libs:
+
+npm i react-leaflet leaflet leaflet-draw @turf/turf classnames
+
+
+Import CSS (e.g., in app/layout.tsx or the map component):
+
+import 'leaflet/dist/leaflet.css';
+import 'leaflet-draw/dist/leaflet.draw.css';
+
+
+Use dynamic import for the map:
+
+const MarketMap = dynamic(() => import('@/components/map/MarketMap'), { ssr: false });
+
+Non‑Goals (this sprint)
+
+No clustering or heatmaps.
+
+No multi‑polygon support (single polygon only).
+
+No drag‑and‑drop reordering within the tray (swap is enough).
+
+No backend DB; JSON persistence only.
+
+Quality Bar
+
+Strong TypeScript types for API payloads & components.
+
+Map interactions smooth; no console errors.
+
+Accessible buttons/dialogs; color + label for bands.
+
+Clean separation: map, cards, tray, and API clients.
+
+Deliver exactly this slice, integrated into the existing Comps tab and compatible with the Weights/Scoring from the prior sprint.
