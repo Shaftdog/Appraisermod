@@ -70,8 +70,8 @@ export function useAddenda(orderId: string): UseAddendaReturn {
     }
   }, [isLoading, serverAddenda, localAddenda, orderId]);
 
-  // Debounced auto-save (300ms delay)
-  const debouncedAddenda = useDebounce(localAddenda, 300);
+  // Debounced auto-save (1000ms delay)
+  const debouncedAddenda = useDebounce(localAddenda, 1000);
 
   // Save mutation
   const saveMutation = useMutation({
@@ -80,10 +80,7 @@ export function useAddenda(orderId: string): UseAddendaReturn {
       // Update query cache
       queryClient.setQueryData(['/api/photos', orderId, 'addenda'], savedAddenda);
       setIsDirty(false);
-      toast({ 
-        title: "Addenda saved", 
-        description: "Changes saved automatically" 
-      });
+      // No success toast for auto-save to avoid spam
     },
     onError: (error) => {
       toast({

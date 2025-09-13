@@ -21,6 +21,8 @@ interface AddendaPanelProps {
   isDirty: boolean;
   isSaving: boolean;
   onChange: (addenda: PhotoAddenda) => void;
+  activeCell: { pageId: string; cellIndex: number } | null;
+  onActiveCellChange: (cell: { pageId: string; cellIndex: number } | null) => void;
 }
 
 const DEFAULT_PDF_SETTINGS: PDFExportSettings = {
@@ -39,7 +41,9 @@ export function AddendaPanel({
   photosById,
   isDirty,
   isSaving,
-  onChange
+  onChange,
+  activeCell,
+  onActiveCellChange
 }: AddendaPanelProps) {
   const [pdfSettings, setPdfSettings] = useState<PDFExportSettings>(DEFAULT_PDF_SETTINGS);
 
@@ -165,38 +169,68 @@ export function AddendaPanel({
                   page.layout === '4up' ? 'grid-cols-2 lg:grid-cols-4' : 
                   'grid-cols-2 lg:grid-cols-3'
                 }`}>
-                  {page.cells.map((cell, index) => (
-                    <div key={index} className="border border-dashed border-border rounded p-2 min-h-[100px]">
-                      {cell.photoId && photosById[cell.photoId] ? (
-                        <div className="space-y-2">
-                          <img
-                            src={photosById[cell.photoId].thumbPath}
-                            alt={photosById[cell.photoId].caption || 'Photo'}
-                            className="w-full h-16 object-cover rounded"
-                          />
-                          <Input
-                            value={cell.caption || ''}
-                            onChange={(e) => updateCell(page.id, index, cell.photoId, e.target.value)}
-                            placeholder="Caption..."
-                            className="text-xs"
-                          />
-                          <Button
-                            onClick={() => updateCell(page.id, index, undefined, undefined)}
-                            variant="outline"
-                            size="sm"
-                            className="w-full"
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                          <Image className="w-6 h-6 mb-2" />
-                          <p className="text-xs text-center">Drop photo here or click gallery photo to insert</p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  {page.cells.map((cell, index) => {
+                    const isActive = activeCell?.pageId === page.id && activeCell?.cellIndex === index;
+                    return (
+                      <div 
+                        key={index} 
+                        className={`border border-dashed rounded p-2 min-h-[100px] cursor-pointer transition-colors ${
+                          isActive 
+                            ? 'border-primary bg-primary/10' 
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                        onClick={() => {
+                          if (!cell.photoId) {
+                            onActiveCellChange(isActive ? null : { pageId: page.id, cellIndex: index });
+                          }
+                        }}
+                      >
+                        {cell.photoId && photosById[cell.photoId] ? (
+                          <div className="space-y-2">
+                            <img
+                              src={photosById[cell.photoId].thumbPath}
+                              alt={photosById[cell.photoId].caption || 'Photo'}
+                              className="w-full h-16 object-cover rounded"
+                            />
+                            <Input
+                              value={cell.caption || ''}
+                              onChange={(e) => updateCell(page.id, index, cell.photoId, e.target.value)}
+                              placeholder="Caption..."
+                              className="text-xs"
+                            />
+                            <Button
+                              onClick={() => updateCell(page.id, index, undefined, undefined)}
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                            <Image className={`w-6 h-6 mb-2 ${isActive ? 'text-primary' : ''}`} />
+                            <p className="text-xs text-center">
+                              {isActive ? 'Click a photo in gallery to insert' : 'Click to select cell'}
+                            </p>
+                            {isActive && (
+                              <Button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onActiveCellChange(null);
+                                }}
+                                variant="outline" 
+                                size="sm" 
+                                className="mt-2"
+                              >
+                                Cancel
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

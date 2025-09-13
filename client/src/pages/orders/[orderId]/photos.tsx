@@ -33,6 +33,9 @@ export default function Photos() {
   const [categoryFilter, setCategoryFilter] = useState<PhotoCategory | 'all'>('all');
   const [editingPhoto, setEditingPhoto] = useState<PhotoMeta | null>(null);
   const [mobileView, setMobileView] = useState<'gallery' | 'addenda'>('gallery');
+  
+  // Addenda insertion state
+  const [activeCell, setActiveCell] = useState<{ pageId: string; cellIndex: number } | null>(null);
 
   const { data: order } = useQuery<Order>({
     queryKey: ['/api/orders', orderId],
@@ -141,6 +144,41 @@ export default function Photos() {
 
   // Photo handlers
   const handlePhotoSelect = (photo: PhotoMeta) => {
+    // If there's an active cell, insert the photo into it
+    if (activeCell && addenda) {
+      const page = addenda.pages.find(p => p.id === activeCell.pageId);
+      if (page) {
+        const newCells = [...page.cells];
+        newCells[activeCell.cellIndex] = { photoId: photo.id, caption: photo.caption || '' };
+        
+        const updatedAddenda = {
+          ...addenda,
+          pages: addenda.pages.map(p => 
+            p.id === activeCell.pageId 
+              ? { ...p, cells: newCells }
+              : p
+          ),
+          updatedAt: new Date().toISOString()
+        };
+        
+        saveAddenda(updatedAddenda);
+        setActiveCell(null); // Clear selection after insertion
+        
+        toast({
+          title: "Photo inserted",
+          description: `Added to ${page.title} cell ${activeCell.cellIndex + 1}`
+        });
+        
+        // Switch to addenda view on mobile to show the result
+        if (window.innerWidth < 1024) {
+          setMobileView('addenda');
+        }
+        
+        return;
+      }
+    }
+    
+    // Default photo selection behavior
     setSelectedPhotos(new Set([photo.id]));
   };
 
@@ -302,6 +340,8 @@ export default function Photos() {
                 isDirty={addendaDirty}
                 isSaving={addendaSaving}
                 onChange={saveAddenda}
+                activeCell={activeCell}
+                onActiveCellChange={setActiveCell}
               />
             </TabsContent>
           </Tabs>
@@ -361,6 +401,8 @@ export default function Photos() {
               isDirty={addendaDirty}
               isSaving={addendaSaving}
               onChange={saveAddenda}
+              activeCell={activeCell}
+              onActiveCellChange={setActiveCell}
             />
           </div>
         </div>
