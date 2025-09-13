@@ -256,6 +256,88 @@ export const marketPolygonSchema = z.object({
   properties: z.record(z.any()).optional()
 });
 
+// MCR Market Data Types
+export type ListingStatus = 'active' | 'pending' | 'sold' | 'expired';
+
+export interface MarketRecord {
+  id: string;
+  status: ListingStatus;
+  address: string;
+  lat: number; 
+  lng: number;
+  listDate?: string;     // ISO
+  closeDate?: string;    // ISO (sold)
+  listPrice?: number;
+  salePrice?: number;    // sold only
+  livingArea?: number;   // GLA
+  dom?: number;          // days on market
+  spToLp?: number;       // salePrice / listPrice for sold
+}
+
+export interface MarketSettings {
+  orderId: string;
+  monthsBack: 12 | 18 | 24;
+  statuses: ListingStatus[];        // default: ['sold','active','pending','expired']
+  usePolygon: boolean;              // default: true
+  metric: 'salePrice' | 'ppsf';     // trend basis
+  smoothing: 'none' | 'ema';        // optional display smoothing
+  minSalesPerMonth: number;         // default: 5
+}
+
+export interface McrMetrics {
+  sampleCounts: { sold: number; active: number; pending: number; expired: number };
+  mediansByMonth: Array<{ month: string; medianSalePrice?: number; medianPPSF?: number; n: number }>;
+  absorptionPerMonth: number;     // avg sold per month
+  monthsOfInventory: number;      // active / absorption
+  domMedian?: number;
+  spToLpMedian?: number;
+  trendPctPerMonth: number;       // e.g., +0.7%/mo
+  trendMethod: 'theil-sen-log' | 'ols-log';
+  ciPctPerMonth?: { low: number; high: number }; // optional
+}
+
+export interface TimeAdjustments {
+  orderId: string;
+  basis: 'salePrice' | 'ppsf';
+  pctPerMonth: number;    // signed decimal (e.g., 0.007 = +0.7%/mo)
+  computedAt: string;     // ISO
+}
+
+// Zod Schemas for MCR
+export const listingStatusSchema = z.enum(['active', 'pending', 'sold', 'expired']);
+
+export const marketRecordSchema = z.object({
+  id: z.string(),
+  status: listingStatusSchema,
+  address: z.string(),
+  lat: z.number(),
+  lng: z.number(),
+  listDate: z.string().optional(),
+  closeDate: z.string().optional(),
+  listPrice: z.number().optional(),
+  salePrice: z.number().optional(),
+  livingArea: z.number().optional(),
+  dom: z.number().optional(),
+  spToLp: z.number().optional()
+});
+
+export const marketSettingsSchema = z.object({
+  orderId: z.string(),
+  monthsBack: z.union([z.literal(12), z.literal(18), z.literal(24)]),
+  statuses: z.array(listingStatusSchema),
+  usePolygon: z.boolean(),
+  metric: z.enum(['salePrice', 'ppsf']),
+  smoothing: z.enum(['none', 'ema']),
+  minSalesPerMonth: z.number().min(1)
+});
+
+export const timeAdjustmentsSchema = z.object({
+  orderId: z.string(),
+  basis: z.enum(['salePrice', 'ppsf']),
+  pctPerMonth: z.number(),
+  computedAt: z.string()
+});
+
 export const compSelectionUpdateSchema = z.object({
   primary: z.array(z.string()).max(3).optional(),
   locked: z.array(z.string()).optional(),

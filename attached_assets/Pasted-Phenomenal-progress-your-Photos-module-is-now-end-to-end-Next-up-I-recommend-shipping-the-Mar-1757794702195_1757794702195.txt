@@ -1,0 +1,296 @@
+Phenomenal progress—your Photos module is now end‑to‑end. 🚀
+**Next up, I recommend shipping the Market Conditions + Time Adjustments (MCR) slice.** It feeds directly into your Hi‑Low comps and adjustment engines, and it’s a prerequisite for consistent time adjustments in the grid.
+
+Below is a **copy‑paste prompt** for Replit to implement the **MCR + Time Adjustments** feature, integrated into your existing **Market** tab (frontend‑only with mock routes), using your **current polygon** and comp data.
+
+---
+
+## PROMPT FOR REPLIT
+
+**PROJECT TITLE**
+**FE: Market Conditions + Time Adjustments (MCR)** — Interactive market analytics (Active/Pending/Sold/Expired), robust trend estimation, and **per‑month time adjustment** for comps. Integrate with the existing Market tab and polygon. **Frontend‑only** (mock API routes allowed). **Do not modify the secured Photo API.**
+
+---
+
+### SCOPE RULES (IMPORTANT)
+
+* Implement **frontend UI** and **Next.js route handlers (mock)** under `app/api/…` for market data storage/compute.
+* **Do NOT change existing secured Photo endpoints.**
+* Reuse the **existing Market polygon** and “Restrict to polygon” setting if present.
+* Compute analytics **in FE** (or in mock API handlers), persist results to JSON under `/data/orders/<id>/market/`.
+* Wire **time‑adjustment %/mo** into Comps so each candidate/primary comp shows an **auto time adjustment suggestion** (non‑destructive; user can override later).
+
+---
+
+## Stack & Libraries
+
+* Next.js **14+ App Router**, **TypeScript**, Tailwind
+* **Date utils:** `date-fns`
+* **Math/robust stats:** implement **Theil–Sen** or use a light MIT lib. If adding a lib isn’t ideal, implement Theil–Sen (median of slopes) and IQR outlier filtering by hand.
+* **Charts:** `recharts` (MIT) for line/area/column charts
+* **Geo:** reuse `@turf/turf` already in project (if installed) for polygon filtering
+
+Install:
+
+```
+npm i date-fns recharts
+```
+
+---
+
+## Data Contracts
+
+**Types (extend `types/market.ts`):**
+
+```ts
+export type ListingStatus = 'active' | 'pending' | 'sold' | 'expired';
+
+export interface MarketRecord {
+  id: string;
+  status: ListingStatus;
+  address: string;
+  lat: number; lng: number;
+  listDate?: string;     // ISO
+  closeDate?: string;    // ISO (sold)
+  listPrice?: number;
+  salePrice?: number;    // sold only
+  livingArea?: number;   // GLA
+  dom?: number;          // days on market
+  spToLp?: number;       // salePrice / listPrice for sold
+}
+
+export interface MarketSettings {
+  orderId: string;
+  monthsBack: 12 | 18 | 24;
+  statuses: ListingStatus[];        // default: ['sold','active','pending','expired']
+  usePolygon: boolean;              // default: true
+  metric: 'salePrice' | 'ppsf';     // trend basis
+  smoothing: 'none' | 'ema';        // optional display smoothing
+  minSalesPerMonth: number;         // default: 5
+}
+
+export interface McrMetrics {
+  sampleCounts: { sold: number; active: number; pending: number; expired: number };
+  mediansByMonth: Array<{ month: string; medianSalePrice?: number; medianPPSF?: number; n: number }>;
+  absorptionPerMonth: number;     // avg sold per month
+  monthsOfInventory: number;      // active / absorption
+  domMedian?: number;
+  spToLpMedian?: number;
+  trendPctPerMonth: number;       // e.g., +0.7%/mo
+  trendMethod: 'theil-sen-log' | 'ols-log';
+  ciPctPerMonth?: { low: number; high: number }; // optional
+}
+
+export interface TimeAdjustments {
+  orderId: string;
+  basis: 'salePrice' | 'ppsf';
+  pctPerMonth: number;    // signed decimal (e.g., 0.007 = +0.7%/mo)
+  computedAt: string;     // ISO
+}
+```
+
+**Storage (JSON under `/data/orders/<id>/market/`):**
+
+* `settings.json` → `MarketSettings`
+* `records.json` → `MarketRecord[]` (seed with 6–24 months of mixed records)
+* `mcr.json` → last computed `McrMetrics`
+* `time-adjustments.json` → last `TimeAdjustments`
+
+> For now, seed `records.json` with realistic example data and ensure lat/lng fall around the subject. You can synthesize DOM and prices with mild noise.
+
+---
+
+## Mock API Routes (Next.js Route Handlers)
+
+Create under `app/api/orders/[id]/market/...`:
+
+* **Settings**
+
+  * `GET /api/orders/:id/market/settings`
+  * `PUT /api/orders/:id/market/settings` → validate ranges (monthsBack ∈ {12,18,24}, etc.)
+
+* **Records**
+
+  * `GET /api/orders/:id/market/records` → returns `MarketRecord[]` (server filters by polygon if `usePolygon` is true—optional)
+  * `POST /api/orders/:id/market/records/seed` → (dev only) reseed synthetic data
+
+* **Compute**
+
+  * `POST /api/orders/:id/market/mcr/compute`
+    Input: `{ settings?: Partial<MarketSettings> }` (optional override)
+    Output: `McrMetrics`
+    Logic:
+
+    1. **Filter** records by date window (monthsBack), status set, and polygon if enabled (point‑in‑polygon).
+    2. **Outlier filter** sold prices using **IQR** on `metric` basis (salePrice or ppsf).
+    3. **Group** sold by calendar month; compute **median** sale price and **median PPSF**, plus `n`.
+    4. **Trend**:
+
+       * Use **log‑price** and **Theil–Sen** slope over month indices:
+         `y = ln(price)`, `x = months since start` → slope `b` (per month), **pct/mo** = `exp(b) - 1`.
+       * If insufficient monthly points (< 6), fall back to OLS on log‑price.
+       * Optional bootstrap for a simple CI (not required if time‑boxed).
+    5. **Absorption** = average sold per month; **MOI** = active / absorption.
+       **DOM** median; **SP/LP** median for sold.
+    6. Return metrics.
+
+* **Time Adjustments**
+
+  * `GET /api/orders/:id/market/time-adjustments` → `TimeAdjustments`
+  * `PUT /api/orders/:id/market/time-adjustments` → store `{ pctPerMonth }` chosen by user (defaults to computed)
+
+* **Apply suggestion to Comps (UI only)**
+
+  * *No new backend required.* The Comps view will **display** the suggested %/mo and compute a **per‑comp time delta** client‑side:
+    `adjFactor = (1 + pctPerMonth)^(monthsSinceSale)` then \*\*adjustedPrice = salePrice \* adjFactor\`.
+    Persisting line‑item grid adjustments is out of scope here.
+
+---
+
+## UI: Market Tab Enhancements
+
+**Page:** `app/orders/[orderId]/(tabs)/market/page.tsx`
+
+**Top Toolbar**
+
+* Timeframe: `12 / 18 / 24 mo`
+* Status toggles: **Active / Pending / Sold / Expired**
+* Metric toggle: **Sale Price** vs **\$/SF**
+* “Use market polygon” toggle (read existing polygon & restrictToPolygon; re‑use or mirror that state)
+* **Compute** button → calls `/market/mcr/compute`
+* **Save as order default** button → saves `settings.json`
+
+**Charts (Recharts)**
+
+* **Price Trend** (primary):
+
+  * X = Month; Y = Median (Sale Price or \$/SF)
+  * Scatter for monthly medians; **trend line** (from Theil–Sen/OLS) with slope annotation “+0.7%/mo (Theil–Sen)”
+  * Optional shaded CI if implemented
+* **SP/LP Ratio** (sold only, bar or line)
+* **DOM** median (line)
+* **Inventory** (MOI) — small KPI card: “X.X months”
+
+**KPI Cards**
+
+* Sample counts by status
+* Absorption (avg sold/mo)
+* Months of Inventory
+* Trend %/mo (computed) with method label
+* Button **“Use this time adjustment”** → PUT `/market/time-adjustments` with `pctPerMonth`
+
+**Narrative Box (auto‑draft)**
+
+* Generate a concise narrative:
+  “Within the defined market area (polygon), the median sale price shows an estimated **+0.7% per month** trend over the past **12 months** (Theil–Sen). **Months of inventory** is **2.9** with an **absorption rate** of **22 sales/month**. **Median DOM** is **18**, and **SP/LP** median is **98.2%**. These indicators support a **slightly appreciating** market; a time adjustment of **+0.7%/mo** is applied to closed sales.”
+
+**Apply to Comps (read‑only preview)**
+
+* In the **Comps** tab card footer (or a small banner), show:
+  “Time adj: +0.7%/mo → Comp sold **8 months** ago → **+5.7%** (+\$XX,XXX).”
+  (Compute locally; do not persist line items yet.)
+
+---
+
+## Helpers & Math
+
+**Outlier filter (IQR):**
+
+```ts
+// For array of values v:
+Q1 = percentile(v, 25), Q3 = percentile(v, 75)
+IQR = Q3 - Q1
+keep if v >= Q1 - 1.5*IQR && v <= Q3 + 1.5*IQR
+```
+
+**Theil–Sen on log‑prices:**
+
+* Convert each monthly median `M_t` to `y_t = ln(M_t)`, x\_t = month index (0..N-1).
+* All pairwise slopes: `(y_j - y_i) / (x_j - x_i)` for j>i; slope `b` = median(slopes).
+* Intercept `a` = median of `y_t - b*x_t`.
+* Trend percent/month = `exp(b) - 1`.
+
+Provide utility functions in `lib/market/stats.ts`:
+
+* `computeMonthlyMedians(records, metric)`
+* `iqrFilter(values)`
+* `theilSenLog(medians)` and `olsLog(medians)` (fallback)
+* `monthsBetween(d1, d2)` (date‑fns)
+
+---
+
+## Components to Build
+
+* `components/market/MarketToolbar.tsx`
+* `components/market/TrendChart.tsx` (Recharts line + trend overlay)
+* `components/market/SpLpChart.tsx`
+* `components/market/DomChart.tsx`
+* `components/market/KpiCards.tsx`
+* `components/market/NarrativeBox.tsx`
+* **(Comps integration)**: small `components/comps/TimeAdjBadge.tsx` used on Comp cards to show %/mo and per‑comp delta
+
+---
+
+## Wiring into Comps Tab
+
+* Fetch `GET /market/time-adjustments` once and pass `pctPerMonth` to Comps.
+* Each comp knows `monthsSinceSale`; compute `adjPct = (1 + pctPerMonth)^(monthsSinceSale) - 1` and **display** the suggested monetary adjustment on the card (do **not** mutate server data here).
+
+---
+
+## QC & Sign‑off (light)
+
+* Add **Market QC** rules (UI only, mock):
+
+  * **Red**: fewer than 6 monthly points after outlier filter, or fewer than `minSalesPerMonth` in ≥ 50% of months, or contradictory metrics (e.g., trend > +0.5%/mo but SP/LP < 95% with high DOM).
+  * **Yellow**: borderline samples; high IQR; CI crossing 0 (if CI implemented).
+  * **Green**: adequate sample and consistent indicators.
+* Show R/Y/G on the Market tab chip and block sign‑off on **Red** unless override reason provided (reuse your sign‑off pattern).
+
+---
+
+## Acceptance Criteria (demo checklist)
+
+* [ ] Market tab shows toolbar, charts, KPI cards, and narrative based on current **monthsBack** and **status** filters.
+* [ ] **Compute** recomputes medians, trend, absorption, MOI, DOM, SP/LP with outlier filtering.
+* [ ] Trend label shows e.g., **“+0.7%/mo (Theil–Sen)”** and updates when metric toggles (Sale Price vs \$/SF).
+* [ ] **Use this time adjustment** stores `{ pctPerMonth }` and Comps cards show per‑comp time adj suggestions.
+* [ ] “Use polygon” filters to **inside** the polygon; counts and charts update accordingly.
+* [ ] Market QC chip reflects data sufficiency; Red blocks sign‑off without override.
+* [ ] All settings/results persist to `/data/orders/<id>/market/*.json`.
+* [ ] No changes to the secured Photo API.
+
+---
+
+## Manual Test Script (copy/paste)
+
+1. Open `/orders/123` → **Market** tab.
+2. Set **12 mo**, statuses **Sold + Active + Pending**, metric **Sale Price** → **Compute**.
+3. Verify **Trend** shows a %/mo and charts render monthly points + trend line.
+4. Toggle to **\$/SF** → **Compute** → trend updates.
+5. Toggle **Use polygon ON** → counts drop; charts recompute; **Use this time adjustment** → saved.
+6. Switch to **Comps** tab → each comp shows “Time adj: +X% (Δmonths) → +\$Y”.
+7. Return to Market → change to 24 mo → **Compute**; QC chip may turn Yellow if sparse.
+8. Break data (seed fewer sold records) → **Compute** → QC turns **Red**; attempt sign‑off → blocked; add override reason → allowed.
+
+---
+
+## Non‑Goals (this slice)
+
+* No MLS/provider integrations (mock data only).
+* No saving line‑item grid adjustments (display only).
+* No seasonality decomposition (can add later).
+* No PDF export of MCR page (optional next slice—easy to add via your pdf-lib).
+
+---
+
+## Quality Bar
+
+* Strong TS types and pure helper functions in `lib/market/stats.ts` (unit‑testable).
+* Charts accessible; tooltips keyboard‑focusable.
+* Clear tooltips explaining each KPI and the trend methodology.
+* Clean separation: settings, compute, and comps‑integration.
+
+---
+
+**Deliver exactly this MCR slice** so appraisers can define the market, see transparent trend math, select a **time adjustment %/mo**, and preview per‑comp adjustments—before we implement the full **3‑engine attribute adjustments** next.
