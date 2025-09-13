@@ -37,6 +37,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return true;
     }
     
+    // Appraisers can access all orders (for appraisal workflow)
+    if (user.role === 'appraiser') {
+      return true;
+    }
+    
     // Check explicit order assignment using stable userId
     const assignedUsers = orderAssignments.get(orderId);
     if (assignedUsers && assignedUsers.has(user.id)) {
