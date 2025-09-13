@@ -8,6 +8,8 @@ import { Toolbar } from '@/components/Toolbar';
 import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
+import { ReconciliationAnalysis } from '@/components/reconciliation/ReconciliationAnalysis';
+import { AdjustmentsBundle } from '@shared/adjustments';
 
 export default function Reconciliation() {
   const params = useParams<{ orderId: string }>();
@@ -18,6 +20,12 @@ export default function Reconciliation() {
 
   const { data: order } = useQuery<Order>({
     queryKey: ['/api/orders', orderId],
+    enabled: !!orderId
+  });
+
+  // Fetch adjustments bundle for reconciliation analysis
+  const { data: bundle } = useQuery<AdjustmentsBundle>({
+    queryKey: ['/api/orders', orderId, 'adjustments/bundle'],
     enabled: !!orderId
   });
 
@@ -88,15 +96,12 @@ export default function Reconciliation() {
         />
       </div>
 
-      <div className="bg-card border border-border rounded-lg p-6">
-        <h3 className="font-medium text-foreground mb-4">Final Appraised Value</h3>
-        <div className="text-center p-8">
-          <div className="text-3xl font-bold text-foreground mb-2" data-testid="final-appraised-value">
-            {tab.currentData.finalValue || '$485,000'}
-          </div>
-          <div className="text-muted-foreground">Final Appraised Value</div>
-        </div>
-      </div>
+      {/* Reconciliation Analysis with indicated values and narratives */}
+      <ReconciliationAnalysis 
+        bundle={bundle} 
+        finalValue={tab.currentData.finalValue || '$485,000'}
+        orderId={orderId!}
+      />
 
       {showVersions && (
         <VersionDiffViewer
