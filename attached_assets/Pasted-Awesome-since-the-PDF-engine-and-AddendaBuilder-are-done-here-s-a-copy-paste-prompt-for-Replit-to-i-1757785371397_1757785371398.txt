@@ -1,0 +1,194 @@
+Awesome—since the PDF engine and AddendaBuilder are done, here’s a copy‑paste prompt for Replit to integrate the Addenda system into the Photos tab (no backend changes). It wires data from your existing Photo API, renders the builder + export, shows a simple gallery, and surfaces QC status.
+
+⸻
+
+PROMPT FOR REPLIT
+
+PROJECT TITLE
+FE: Photos Tab Integration — Wire AddendaBuilder + Export into the Photos tab, using existing secured Photo API. Provide a minimal gallery and QC badge. No backend changes.
+
+⸻
+
+SCOPE RULES (IMPORTANT)
+	•	Do NOT create or modify backend API routes.
+	•	Use the existing Photo API. Centralize all endpoint paths + auth headers in config files.
+	•	Blur/face detection not in scope here (that’s the next slice). Provide an “Edit & Blur (coming soon)” placeholder in the gallery tile menu.
+
+⸻
+
+Stack & Conventions
+	•	Next.js 14+ App Router, TypeScript, Tailwind CSS.
+	•	Accessible, responsive (desktop + mobile), keyboard‑friendly.
+	•	State: use React state + SWR (or simple fetch hooks) for API reads/writes.
+	•	Show a non‑blocking auth banner if 401/403 instructing .env.local setup.
+
+⸻
+
+0) Config single source of truth
+
+config/endpointPaths.ts (extend if exists):
+
+export const PhotoAPI = {
+  listPhotos: (orderId: string) => `/api/orders/${orderId}/photos`,
+  updatePhoto: (orderId: string, photoId: string) => `/api/orders/${orderId}/photos/${photoId}`,
+  deletePhoto: (orderId: string, photoId: string) => `/api/orders/${orderId}/photos/${photoId}`,
+  addendaGet: (orderId: string) => `/api/orders/${orderId}/photos/addenda`,
+  addendaPut: (orderId: string) => `/api/orders/${orderId}/photos/addenda`,
+  addendaExport: (orderId: string) => `/api/orders/${orderId}/photos/addenda/export`,
+  qcSummary: (orderId: string) => `/api/orders/${orderId}/photos/qc`,
+};
+
+config/auth.ts:
+
+export const DEV_AUTH = {
+  headerName: process.env.NEXT_PUBLIC_AUTH_HEADER_NAME || 'x-user-id',
+  userId: process.env.NEXT_PUBLIC_DEV_USER_ID || 'demo-user',
+};
+export const authHeaders = { [DEV_AUTH.headerName]: DEV_AUTH.userId };
+
+
+⸻
+
+1) Typed API client (frontend only)
+
+lib/photoApi.ts
+	•	getPhotos(orderId) → PhotoMeta[]
+	•	updatePhoto(orderId, photoId, patch) → partial updates (category/caption)
+	•	deletePhoto(orderId, photoId)
+	•	getAddenda(orderId) → PhotoAddenda
+	•	putAddenda(orderId, addenda) → upsert
+	•	uploadAddendaPdf(orderId, blob) → use pdf route already implemented (from your prior PDF slice)
+	•	getPhotosQc(orderId) → PhotosQcSummary
+
+All fetches include authHeaders. On 401/403, throw a typed error we can catch to show a banner.
+
+⸻
+
+2) Hooks (data glue)
+
+Create simple hooks (SWR or custom):
+	•	hooks/usePhotos.ts
+	•	usePhotos(orderId) → { photos, isLoading, error, mutate }
+	•	helpers: usePhotoMap(photos) returns Record<id, PhotoMeta>
+	•	hooks/useAddenda.ts
+	•	useAddenda(orderId) → { addenda, isLoading, error, save(addenda), isSaving } with a 300ms debounce for autosave after any edit
+	•	hooks/usePhotosQc.ts
+	•	usePhotosQc(orderId) → { qc, refresh }
+
+⸻
+
+3) Photos Tab page
+
+File: app/orders/[orderId]/(tabs)/photos/page.tsx
+
+Layout (desktop):
+	•	Header bar:
+	•	Left: Title “Photos” + PhotosQcBadge
+	•	Right: Export toolbar button (opens a panel with your existing export settings)
+	•	Two‑pane (responsive grid):
+	•	Left pane (GalleryPanel):
+	•	Category filter
+	•	Thumbnails (grid) with caption + category badge
+	•	Per‑tile menu: Edit & Blur (coming soon / disabled), Change Category, Edit Caption, Delete
+	•	Bulk actions: Assign category, Caption prefix
+	•	Right pane (AddendaPanel):
+	•	AddendaBuilder (already built) rendered with current pages
+	•	AddendaExportBar (already built) wired to call generateAddendaPdf() and uploadAddendaPdf() (from the PDF slice)
+
+Mobile:
+	•	Top tabs Gallery | Addenda. Each view full‑width; export button remains accessible.
+
+⸻
+
+4) Components to create/wire
+	•	components/photos/PhotosAuthBanner.tsx — appears when any call throws 401/403; instructs setting .env.local with NEXT_PUBLIC_AUTH_HEADER_NAME and NEXT_PUBLIC_DEV_USER_ID.
+	•	components/photos/PhotosQcBadge.tsx — R/Y/G with tooltip (missing categories + unresolved detections count). Consumes usePhotosQc(orderId).
+	•	components/photos/GalleryPanel.tsx
+	•	Props: { orderId, photos, onChangePhoto(patch), onDelete(id) }
+	•	Category filter (All, Exterior, Interior, Deficiencies, Other); basic counts.
+	•	PhotoTile list (grid).
+	•	components/photos/PhotoTile.tsx
+	•	Shows thumbPath (fallback to displayPath), caption (inline editable), category tag.
+	•	Kebab menu:
+	•	Edit & Blur (coming soon) → disabled button with tooltip “Will open editor in next release.”
+	•	Change Category → submenu with categories
+	•	Delete → confirm dialog
+	•	Keyboard accessible.
+	•	components/photos/AddendaPanel.tsx
+	•	Props: { orderId, addenda, photosById, onChange(addenda), onExport(options) }
+	•	Renders AddendaBuilder (already implemented) and AddendaExportBar (from PDF slice) beneath it.
+	•	On any builder change → debounce → putAddenda(orderId, next).
+	•	Reuse your existing AddendaBuilder, AddendaExportBar, and the PDF generation utilities.
+
+⸻
+
+5) Wiring logic
+	•	Data load sequence in Photos page:
+	1.	const { photos, isLoading: pLoading } = usePhotos(orderId)
+	2.	const { addenda, isLoading: aLoading, save } = useAddenda(orderId)
+	3.	const photosById = usePhotoMap(photos)
+	4.	const { qc } = usePhotosQc(orderId)
+	•	Pass data into GalleryPanel and AddendaPanel.
+	•	AddendaBuilder integration:
+	•	The builder should accept the current addenda.pages and a photo lookup so empty cells can show “drop a photo”.
+	•	Dragging from gallery → for this slice, implement click‑to-insert from a PhotoTile (open a small modal: “Pick page & cell” or highlight the “active cell” in builder). If you already have drag‑and‑drop between panes done, use that; otherwise simple “insert to selected cell” is fine.
+	•	Export:
+	•	AddendaExportBar calls generateAddendaPdf({ orderId, addenda, photosById, options }), then uploadAddendaPdf(orderId, blob).
+	•	Show progress toasts and a download link from API response.
+
+⸻
+
+6) UX Details
+	•	Skeletons while loading (shimmer) for gallery grid and builder pages.
+	•	Dirty badge on Addenda panel when local edits are not yet saved (clears after successful putAddenda).
+	•	Toasts for save success/failure and deletions.
+	•	Empty states:
+	•	No photos → “Upload photos in the Photos tab” (if you already have capture/upload elsewhere, link to it).
+	•	No addenda pages → “Click ‘Add Page’ to start” (your builder likely already has this).
+	•	Accessibility:
+	•	All tile menus keyboard navigable; captions editable via keyboard; buttons have aria-label.
+	•	Tooltips appear on focus as well as hover.
+
+⸻
+
+7) Acceptance Criteria (demo checklist)
+	•	Photos tab loads: gallery on left, addenda on right (or Gallery/Addenda toggle on mobile).
+	•	Gallery shows thumbnails, category badges, caption editing, and per‑tile menu; delete works with confirm.
+	•	“Edit & Blur” is present but disabled with a tooltip (next sprint).
+	•	AddendaBuilder renders existing pages; you can place photos into cells (click‑to‑insert or drag‑and‑drop).
+	•	Autosave of addenda structure (debounced) to the existing addendaPut endpoint.
+	•	Export generates a PDF (using already‑built pdf‑lib engine), uploads it, and shows a download link; progress indicator visible.
+	•	QC badge reflects GET /photos/qc status; tooltip lists missing categories/unresolved detections.
+	•	Auth banner appears on 401/403 with .env.local guidance.
+	•	All API paths and header names live in config files only.
+
+⸻
+
+8) Manual Test Script (copy/paste)
+	1.	Open /orders/123 → Photos tab.
+	2.	Confirm QC badge loads (R/Y/G + tooltip).
+	3.	In Gallery, edit a caption, change a category, and delete one photo → verify updates and toasts.
+	4.	In Addenda, insert several photos into different layouts → wait for “Saved” toast (debounced autosave).
+	5.	Click Export → progress (generating → uploading) → a download link appears. Open the PDF and confirm images + captions match.
+	6.	Temporarily break dev auth (change .env.local user) → refresh → see auth banner with clear instructions.
+	7.	Mobile viewport: switch to Gallery | Addenda tabs; ensure both views remain usable.
+
+⸻
+
+9) Non‑Goals (this slice)
+	•	No blur/face detection or editor modal (placeholder only).
+	•	No camera capture or upload changes.
+	•	No new backend endpoints.
+	•	No additional PDF features (already completed).
+
+⸻
+
+10) Quality Bar
+	•	Strict TypeScript types for all API responses.
+	•	Centralized config for endpoints and auth headers.
+	•	Accessible components (keyboard, focus ring, ARIA labels).
+	•	Clean separation of concerns: hooks (data), panels (UI), builder (existing), export (existing).
+
+⸻
+
+Deliver exactly this integration slice so the Photos tab is fully functional with the existing AddendaBuilder + PDF export and QC visibility, using only the existing secured Photo API.
