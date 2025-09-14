@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'wouter';
 import { StatusChip } from '@/components/StatusChip';
@@ -26,6 +26,7 @@ import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock, Calend
 import { MarketSettings, MarketRecord, McrMetrics, TimeAdjustments } from '@shared/schema';
 import { computeMonthlyMedians, computeMarketMetrics } from '@/lib/market/stats';
 import type { ClosedSale } from '@shared/attom';
+import { checkAttomRateLimit, formatRateLimitMessage } from '@/lib/attomRateLimit';
 
 export default function Market() {
   const params = useParams<{ orderId: string }>();
@@ -40,8 +41,20 @@ export default function Market() {
     minSalePrice: 100000,
     maxSalePrice: 2000000
   });
+  const [rateLimitStatus, setRateLimitStatus] = useState({ canImport: true, minutesRemaining: 0 });
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Check rate limit on component mount and when needed
+  const checkRateLimit = async () => {
+    const status = await checkAttomRateLimit();
+    setRateLimitStatus(status);
+  };
+
+  // Check rate limit when component mounts
+  useEffect(() => {
+    checkRateLimit();
+  }, []);
 
   const { data: order, isLoading: orderLoading, isError: orderError, error: orderErrorDetails } = useQuery<Order>({
     queryKey: ['/api/orders', orderId],
@@ -217,6 +230,8 @@ export default function Market() {
         title: "ATTOM import successful",
         description: `Imported ${data.count} closed sales from ATTOM Data Solutions.`,
       });
+      // Refresh rate limit status after successful import
+      checkRateLimit();
     },
     onError: (error) => {
       toast({
@@ -603,13 +618,15 @@ export default function Market() {
                       <div className="flex items-center gap-3">
                         <Button
                           onClick={() => importAttomSalesMutation.mutate()}
-                          disabled={importAttomSalesMutation.isPending}
+                          disabled={importAttomSalesMutation.isPending || !rateLimitStatus.canImport}
                           variant="outline"
                           size="sm"
                           data-testid="button-import-attom"
                         >
                           <MapPin className={`h-4 w-4 ${importAttomSalesMutation.isPending ? 'animate-spin' : ''}`} />
-                          {importAttomSalesMutation.isPending ? 'Importing...' : 'Import ATTOM Sales'}
+                          {importAttomSalesMutation.isPending ? 'Importing...' : 
+                           !rateLimitStatus.canImport ? `Rate limited (${formatRateLimitMessage(rateLimitStatus.minutesRemaining)})` :
+                           'Import ATTOM Sales'}
                         </Button>
                         {attomClosedSales && (
                           <Badge variant="secondary" className="text-xs">

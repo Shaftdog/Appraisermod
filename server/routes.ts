@@ -2779,6 +2779,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ATTOM Manifest for rate limiting
+  app.get("/api/attom/manifest", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin', 'appraiser', 'reviewer'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const manifestPath = path.join(process.cwd(), 'data/attom/manifest.json');
+      
+      try {
+        const data = await fs.readFile(manifestPath, 'utf8');
+        const manifest = JSON.parse(data);
+        res.json(manifest);
+      } catch (error) {
+        // If manifest doesn't exist, return empty manifest
+        res.json({ lastRunISO: null, counts: {} });
+      }
+    } catch (error: any) {
+      console.error("Error fetching ATTOM manifest:", error);
+      res.status(500).json({ message: error.message || "Failed to load ATTOM manifest" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
