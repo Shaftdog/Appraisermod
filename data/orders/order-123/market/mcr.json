@@ -1,88 +1,89 @@
 {
   "sampleCounts": {
-    "sold": 64,
-    "active": 6,
+    "sold": 60,
+    "active": 8,
     "pending": 5,
-    "expired": 23
+    "expired": 17
   },
   "mediansByMonth": [
     {
       "month": "2024-10",
-      "medianSalePrice": 534500,
-      "medianPPSF": 193.22152341020265,
+      "medianSalePrice": 529000,
+      "medianPPSF": 217.3377156943303,
       "n": 5
     },
     {
       "month": "2024-11",
-      "medianSalePrice": 468000,
-      "medianPPSF": 208.85780885780886,
-      "n": 3
+      "medianSalePrice": 547000,
+      "medianPPSF": 255.13059701492537,
+      "n": 1
     },
     {
       "month": "2024-12",
-      "medianSalePrice": 513500,
-      "medianPPSF": 187.22843652324266,
-      "n": 4
+      "medianSalePrice": 493000,
+      "medianPPSF": 214.7212543554007,
+      "n": 3
     },
     {
       "month": "2025-01",
-      "medianSalePrice": 490500,
-      "medianPPSF": 198.93186285127075,
-      "n": 6
-    },
-    {
-      "month": "2025-02",
-      "medianSalePrice": 500000,
-      "medianPPSF": 234.82428115015975,
-      "n": 7
-    },
-    {
-      "month": "2025-03",
-      "medianSalePrice": 534000,
-      "medianPPSF": 218.9887619879982,
-      "n": 2
-    },
-    {
-      "month": "2025-04",
-      "medianSalePrice": 482500,
-      "medianPPSF": 190.05692316323461,
-      "n": 6
-    },
-    {
-      "month": "2025-05",
-      "medianSalePrice": 430000,
-      "medianPPSF": 179.6710248840152,
-      "n": 3
-    },
-    {
-      "month": "2025-06",
-      "medianSalePrice": 509000,
-      "medianPPSF": 206.3026749725174,
-      "n": 5
-    },
-    {
-      "month": "2025-07",
-      "medianSalePrice": 489000,
-      "medianPPSF": 226.73267326732673,
-      "n": 5
-    },
-    {
-      "month": "2025-08",
-      "medianSalePrice": 512000,
-      "medianPPSF": 188.661725247146,
+      "medianSalePrice": 511500,
+      "medianPPSF": 238.22993314623366,
       "n": 4
     },
     {
+      "month": "2025-02",
+      "medianSalePrice": 482500,
+      "medianPPSF": 210.45313135020047,
+      "n": 4
+    },
+    {
+      "month": "2025-03",
+      "medianSalePrice": 474000,
+      "medianPPSF": 203.17145688800792,
+      "n": 5
+    },
+    {
+      "month": "2025-04",
+      "medianSalePrice": 544000,
+      "medianPPSF": 217.94310722100656,
+      "n": 4
+    },
+    {
+      "month": "2025-05",
+      "medianSalePrice": 540500,
+      "medianPPSF": 201.25539427226363,
+      "n": 5
+    },
+    {
+      "month": "2025-06",
+      "medianSalePrice": 512500,
+      "medianPPSF": 252.07837969082655,
+      "n": 6
+    },
+    {
+      "month": "2025-07",
+      "medianSalePrice": 471000,
+      "medianPPSF": 191.8497986923379,
+      "n": 4
+    },
+    {
+      "month": "2025-08",
+      "medianSalePrice": 524000,
+      "medianPPSF": 214.1422915772583,
+      "n": 5
+    },
+    {
       "month": "2025-09",
-      "medianSalePrice": 491000,
-      "medianPPSF": 205.27859237536657,
-      "n": 3
+      "medianSalePrice": 502000,
+      "medianPPSF": 203.5208243881494,
+      "n": 5
     }
   ],
-  "absorptionPerMonth": 5.333333333333333,
-  "monthsOfInventory": 1.125,
-  "domMedian": 41,
-  "spToLpMedian": 0.9899739064008292,
-  "trendPctPerMonth": -0.0020288666036809566,
-  "trendMethod": "theil-sen-log"
+  "absorptionPerMonth": 5,
+  "monthsOfInventory": 1.6,
+  "domMedian": 43.5,
+  "spToLpMedian": 0.9860980869371034,
+  "trendPctPerMonth": -0.004756445592456582,
+  "trendMethod": "theil-sen-log",
+  "dataSource": "local"
 }

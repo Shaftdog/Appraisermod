@@ -7,13 +7,19 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Trust proxy for secure cookies behind proxy
+app.set('trust proxy', 1);
+
 // Session configuration
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'dev-secret-key-please-change',
+  secret: process.env.SESSION_SECRET || 'CHANGE_ME',
+  name: 'sid',
   resave: false,
   saveUninitialized: false,
   cookie: { 
-    secure: false, // Set to true in production with HTTPS
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));

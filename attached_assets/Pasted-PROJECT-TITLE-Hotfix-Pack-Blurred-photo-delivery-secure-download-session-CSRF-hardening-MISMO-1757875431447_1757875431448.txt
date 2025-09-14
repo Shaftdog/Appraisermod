@@ -1,0 +1,385 @@
+PROJECT TITLE
+Hotfix Pack — Blurred photo delivery, secure download, session & CSRF hardening, MISMO with real metrics, rate limits, and photo metadata persistence
+
+GOAL
+Apply the following fixes to the current repo without breaking existing APIs:
+
+Photos/Delivery: Generate & serve blurred variants; package blurred or display images in delivery ZIP.
+
+Delivery Download: Guard against path traversal.
+
+Sessions: Production‑safe cookie flags + proxy trust.
+
+CSRF: Minimal same‑origin protection on mutating routes.
+
+MISMO XML: Feed real Market metrics & Time‑Adj into UAD XML.
+
+Rate limits: Add conservative per‑IP limits to sensitive routes.
+
+Photo metadata: Persist to JSON; hydrate on restart.
+
+Do not alter public API shapes unless specified (all changes are additive or hardening).
+
+0) Assumptions
+
+Server: Express + TS under server/ with main app in server/index.ts (or equivalent), routes in server/routes.ts, storage helpers in server/storage.ts.
+
+Types: PhotoMeta already includes processing?.blurredPath.
+
+Images: We use sharp (already present) for processing.
+
+If any file is named slightly differently, apply equivalent changes.
+
+1) Photos: generate & serve blurred variants
+1A) Update server‑side process to write a blurred file
+
+File: server/storage.ts
+Add (or replace) the photo processing logic so masks produce a blurred derivative on disk:
+
+// server/storage.ts
+import fs from 'fs/promises';
+import path from 'path';
+import sharp from 'sharp';
+// ... other imports
+
+type MaskRect = { x:number; y:number; w:number; h:number; radius?:number };
+type MaskBrushStroke = { points: Array<{x:number;y:number}>, radius:number, strength:number };
+
+function svgMaskForPhoto(width:number, height:number, rects:MaskRect[], brush:MaskBrushStroke[]) {
+  // Build an SVG mask: rects + brush as circles along stroke points
+  const rectEls = rects.map(r => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${r.radius ?? 0}" ry="${r.radius ?? 0}" />`).join('');
+  const circleEls = brush.flatMap(b => b.points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="${b.radius}" />`)).join('');
+  return Buffer.from(
+    `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+       <rect width="100%" height="100%" fill="black"/>
+       <g fill="white">${rectEls}${circleEls}</g>
+     </svg>`
+  );
+}
+
+export class Storage {
+  // ... existing class
+
+  async processPhoto(orderId: string, photoId: string) {
+    const photo = await this.getPhoto(orderId, photoId);
+    if (!photo) throw new Error('Photo not found');
+
+    const inputPath = path.join(process.cwd(), photo.displayPath);
+    const img = sharp(inputPath);
+    const meta = await img.metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+
+    const rects: MaskRect[] = photo.masks?.rects ?? [];
+    const brush: MaskBrushStroke[] = photo.masks?.brush ?? [];
+
+    // Build mask SVG (white = blur regions)
+    const maskSvg = svgMaskForPhoto(width, height, rects, brush);
+    const maskPng = await sharp(maskSvg).png().toBuffer();
+
+    // Precompute a blurred full image
+    const blurred = await sharp(inputPath).blur(12).toBuffer();
+
+    // Composite: (blurred ∩ mask) over original
+    const maskedBlur = await sharp(blurred)
+      .composite([{ input: maskPng, blend: 'dest-in' }])
+      .toBuffer();
+
+    const outPathAbs = inputPath.replace(/(\.\w+)$/, '_blurred$1');
+    const outRel = outPathAbs.replace(process.cwd() + path.sep, '');
+
+    await sharp(inputPath)
+      .composite([{ input: maskedBlur, blend: 'over' }])
+      .jpeg({ quality: 85 })
+      .toFile(outPathAbs);
+
+    // Persist processing metadata
+    await this.updatePhoto(orderId, photoId, {
+      processing: {
+        ...(photo.processing || {}),
+        blurredPath: outRel,
+        lastProcessedAt: new Date().toISOString()
+      }
+    });
+
+    return outRel;
+  }
+}
+
+
+Uses SVG to render rect masks and brush circles; no external native deps.
+
+1B) Serve blurred on the file endpoint
+
+File: server/routes.ts
+In the photo file route, honor ?variant=blurred:
+
+// server/routes.ts (inside photos file handler)
+app.get('/api/orders/:id/photos/:photoId/file', async (req, res) => {
+  try {
+    const { id, photoId } = req.params as any;
+    const variant = (req.query.variant as string) || 'display';
+    const photo = await storage.getPhoto(id, photoId);
+    if (!photo) return res.status(404).json({ message: 'Not found' });
+
+    let rel: string | undefined;
+    if (variant === 'original') rel = photo.originalPath;
+    else if (variant === 'thumb') rel = photo.thumbPath;
+    else if (variant === 'blurred') rel = photo.processing?.blurredPath || photo.displayPath;
+    else rel = photo.displayPath;
+
+    const abs = path.join(process.cwd(), rel);
+    return res.sendFile(abs);
+  } catch (e:any) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
+2) Delivery: package blurred (fallback: display) and guard downloads
+2A) Use blurred paths when copying photos into the workfile
+
+File: server/routes.ts → inside /api/orders/:id/delivery/request
+
+Replace any usage of uploads/… or (photo as any).filename with:
+
+// pick blurred if available, else display
+function pickPhotoPath(p: any) {
+  return p.processing?.blurredPath ? p.processing.blurredPath : p.displayPath;
+}
+
+// ... while copying into workfile
+const srcAbs = path.join(process.cwd(), pickPhotoPath(photo));
+const safeName = path.basename(srcAbs);
+const destAbs = path.join(photosDir, safeName);
+await fs.copyFile(srcAbs, destAbs);
+manifest.items.push({ path: `photos/${safeName}`, /* ...sha, bytes populated later ... */ });
+
+2B) Harden download endpoint (no traversal)
+
+File: server/routes.ts → in /api/orders/:id/delivery/download
+
+app.get('/api/orders/:id/delivery/download', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const filename = String(req.query.file || '');
+    if (!filename || filename.includes('..') || path.isAbsolute(filename)) {
+      return res.status(400).json({ message: 'Invalid filename' });
+    }
+    const deliveryDir = path.join(process.cwd(), 'data', 'orders', orderId, 'delivery');
+    const resolved = path.normalize(path.join(deliveryDir, filename));
+    if (!resolved.startsWith(deliveryDir + path.sep)) {
+      return res.status(403).json({ message: 'Forbidden path' });
+    }
+    return res.download(resolved);
+  } catch (e:any) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
+3) Sessions: secure cookie flags & proxy trust
+
+File: server/index.ts (or wherever express-session is configured)
+
+import session from 'express-session';
+
+app.set('trust proxy', 1); // secure cookies behind proxy
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'CHANGE_ME',
+  name: 'sid',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000,
+  }
+}));
+
+4) Minimal CSRF protection (same‑origin check)
+
+File: server/routes.ts (top‑level middleware)
+
+const APP_ORIGIN = new URL(process.env.APP_ORIGIN || 'http://localhost:5173').origin;
+
+function requireSameOrigin(req: any, res: any, next: any) {
+  const origin = req.get('origin');
+  // Allow same-origin and no-origin (e.g., curl) in dev; tighten if needed
+  if (origin && origin !== APP_ORIGIN) {
+    return res.status(403).json({ message: 'Bad origin' });
+  }
+  next();
+}
+
+
+Apply to mutating routes (POST/PUT/DELETE). Example:
+
+app.post('/api/orders/:id/delivery/request', requireAuth, requireSameOrigin, async (req,res)=>{ ... });
+app.post('/api/review/:orderId/signoff', requireAuth, requireSameOrigin, async (req,res)=>{ ... });
+// …photos upload/masks/process, adjustments apply, etc.
+
+5) MISMO XML: use real Market + Time‑Adj inputs
+
+File: server/routes.ts → within delivery request, before building XML:
+
+const mcr = await storage.getMcrMetrics(orderId);              // ensure this reads /market/mcr.json
+const timeAdj = await storage.getTimeAdjustments(orderId);     // reads /market/time-adjustments.json
+const effective = timeAdj?.effectiveDateISO || order.effectiveDate || order.dueDate || new Date().toISOString();
+
+const uadInput = {
+  // ... existing fields
+  marketMetrics: {
+    trendPctPerMonth: mcr?.trendPctPerMonth ?? 0,
+    monthsOfInventory: mcr?.monthsOfInventory ?? null,
+    domMedian: mcr?.domMedian ?? null,
+    spToLpMedian: mcr?.spToLpMedian ?? null
+  },
+  timeAdjustment: {
+    basis: timeAdj?.basis ?? 'salePrice',
+    pctPerMonth: timeAdj?.pctPerMonth ?? 0,
+    effectiveDateISO: effective
+  },
+};
+const xml = buildUAD(uadInput); // lib/mismo/buildUAD.ts
+
+
+(Implement getMcrMetrics and getTimeAdjustments in storage.ts if not present; both just read JSON files.)
+
+6) Add rate limits to sensitive endpoints
+
+File: server/routes.ts (or a new server/ratelimit.ts)
+Simple in‑memory token bucket:
+
+const hits = new Map<string, { count:number; ts:number }>();
+function rateLimit(key:string, limit:number, windowMs:number) {
+  const now = Date.now();
+  const rec = hits.get(key);
+  if (!rec || now - rec.ts > windowMs) { hits.set(key, { count:1, ts:now }); return false; }
+  rec.count++;
+  if (rec.count > limit) return true;
+  return false;
+}
+
+function limitHandler(limit:number, windowMs:number) {
+  return (req:any, res:any, next:any) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const key = `${req.path}:${ip}`;
+    if (rateLimit(key, limit, windowMs)) {
+      res.set('Retry-After', String(Math.ceil(windowMs/1000)));
+      return res.status(429).json({ message: 'Too Many Requests' });
+    }
+    next();
+  };
+}
+
+// Apply conservative limits
+app.post('/api/auth/login', limitHandler(10, 60_000), async (req,res)=>{ /* ... */ });
+app.post('/api/orders/:id/delivery/request', requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req,res)=>{ /* ... */ });
+app.post('/api/orders/:id/photos/upload', requireAuth, limitHandler(30, 60_000), requireSameOrigin, upload.single('file'), async (req,res)=>{ /* ... */ });
+
+
+(If you already have a limiter utility, reuse it instead.)
+
+7) Persist photo metadata to JSON & hydrate on restart
+
+File: server/storage.ts
+Add helpers to read/write data/orders/<id>/photos/photos.json on every create/update/delete.
+
+const photosJsonPath = (orderId:string) =>
+  path.join(process.cwd(), 'data', 'orders', orderId, 'photos', 'photos.json');
+
+async function readPhotosJson(orderId:string) {
+  try {
+    const p = photosJsonPath(orderId);
+    const buf = await fs.readFile(p, 'utf8');
+    return JSON.parse(buf);
+  } catch { return []; }
+}
+
+async function writePhotosJson(orderId:string, list:any[]) {
+  const p = photosJsonPath(orderId);
+  await fs.mkdir(path.dirname(p), { recursive: true });
+  await fs.writeFile(p, JSON.stringify(list, null, 2), 'utf8');
+}
+
+export class Storage {
+  private photosByOrder = new Map<string, any[]>();
+
+  async getPhotos(orderId:string) {
+    if (!this.photosByOrder.has(orderId)) {
+      const fromDisk = await readPhotosJson(orderId);
+      this.photosByOrder.set(orderId, fromDisk);
+    }
+    return this.photosByOrder.get(orderId) || [];
+  }
+
+  async createPhoto(orderId:string, meta:any) {
+    const list = await this.getPhotos(orderId);
+    list.push(meta);
+    await writePhotosJson(orderId, list);
+    return meta;
+  }
+
+  async updatePhoto(orderId:string, photoId:string, patch:any) {
+    const list = await this.getPhotos(orderId);
+    const idx = list.findIndex((p:any) => p.id === photoId);
+    if (idx < 0) throw new Error('Photo not found');
+    list[idx] = { ...list[idx], ...patch, updatedAt: new Date().toISOString() };
+    await writePhotosJson(orderId, list);
+    return list[idx];
+  }
+
+  async deletePhoto(orderId:string, photoId:string) {
+    const list = await this.getPhotos(orderId);
+    const next = list.filter((p:any) => p.id !== photoId);
+    await writePhotosJson(orderId, next);
+    this.photosByOrder.set(orderId, next);
+  }
+
+  // Add simple readers:
+  async getMcrMetrics(orderId:string) {
+    const p = path.join(process.cwd(), 'data', 'orders', orderId, 'market', 'mcr.json');
+    try { return JSON.parse(await fs.readFile(p, 'utf8')); } catch { return null; }
+  }
+  async getTimeAdjustments(orderId:string) {
+    const p = path.join(process.cwd(), 'data', 'orders', orderId, 'market', 'time-adjustments.json');
+    try { return JSON.parse(await fs.readFile(p, 'utf8')); } catch { return null; }
+  }
+}
+
+✅ Acceptance Checklist
+
+ Photo processing writes *_blurred.jpg under data/orders/<id>/photos/display/, and /api/.../file?variant=blurred serves it.
+
+ Delivery ZIP includes blurred images when available; manifest lists blurred filenames.
+
+ Download blocks .. traversal and absolute paths.
+
+ Set‑Cookie (prod) has HttpOnly; Secure; SameSite=Lax; app.set('trust proxy', 1) is present.
+
+ Mutating routes require same‑origin; cross‑origin POST is rejected with 403.
+
+ MISMO XML contains actual trendPctPerMonth, effectiveDateISO, and basis/rate from saved Time‑Adj.
+
+ Rate limits: excessive login/delivery/upload attempts return 429 with Retry-After.
+
+ Photos survive server restart (metadata hydrated from photos.json).
+
+🧪 2‑Minute Manual Test
+
+Blur: Edit a photo (rect + brush) → Save → Process; confirm _blurred.jpg written; open ?variant=blurred.
+
+Addenda & Delivery: Export PDF (visual blur), then Delivery → Workfile ZIP → verify photos/ uses blurred images.
+
+Traversal: Hit /api/orders/123/delivery/download?file=../../ops/backups.jsonl → 403/400.
+
+Cookies: In prod mode, inspect Set‑Cookie flags.
+
+CSRF: Send POST from another origin → 403.
+
+MISMO: Open generated XML; verify trend %, effective date, and basis.
+
+Restart server → Photos list persists.
+
+Deliver exactly this hotfix pack and keep all public API contracts intact.

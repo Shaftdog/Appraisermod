@@ -71,6 +71,44 @@ import { buildUAD26XML } from "../lib/mismo/buildUAD";
 import { makeZip } from "../lib/zip/makeZip";
 import { sha256File } from "../lib/crypto/sha256";
 
+// CSRF protection middleware
+const APP_ORIGIN = new URL(process.env.APP_ORIGIN || 'http://localhost:5173').origin;
+
+function requireSameOrigin(req: any, res: any, next: any) {
+  const origin = req.get('origin');
+  // Allow same-origin and no-origin (e.g., curl) in dev; tighten if needed
+  if (origin && origin !== APP_ORIGIN) {
+    return res.status(403).json({ message: 'Bad origin' });
+  }
+  next();
+}
+
+// Rate limiting middleware
+const hits = new Map<string, { count: number; ts: number }>();
+function rateLimit(key: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  const rec = hits.get(key);
+  if (!rec || now - rec.ts > windowMs) { 
+    hits.set(key, { count: 1, ts: now }); 
+    return false; 
+  }
+  rec.count++;
+  if (rec.count > limit) return true;
+  return false;
+}
+
+function limitHandler(limit: number, windowMs: number) {
+  return (req: any, res: any, next: any) => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const key = `${req.path}:${ip}`;
+    if (rateLimit(key, limit, windowMs)) {
+      res.set('Retry-After', String(Math.ceil(windowMs / 1000)));
+      return res.status(429).json({ message: 'Too Many Requests' });
+    }
+    next();
+  };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Utility function to validate and sanitize orderId
   function validateOrderId(orderId: string): boolean {
@@ -230,6 +268,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'thumb':
           filePath = photo.thumbPath;
           break;
+        case 'blurred':
+          filePath = photo.processing?.blurredPath || photo.displayPath;
+          break;
         case 'display':
         default:
           filePath = photo.displayPath;
@@ -295,7 +336,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create or update a policy pack (admin only)
-  app.post("/api/policy/packs", requireAuth, (req: AuthenticatedRequest, res, next) => requireAdmin(req, res, next), async (req: AuthenticatedRequest, res) => {
+  app.post("/api/policy/packs", requireAuth, requireSameOrigin, (req: AuthenticatedRequest, res, next) => requireAdmin(req, res, next), async (req: AuthenticatedRequest, res) => {
     try {
       // Validate and sanitize input
       const validatedData = policyPackSchema.parse(req.body);
@@ -328,7 +369,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ===== REVIEW API ROUTES =====
 
   // Run policy evaluation against an order
-  app.post("/api/review/:id/run", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/review/:id/run", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -372,7 +413,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update review item (status, assignee, versions)
-  app.put("/api/review/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/review/:id", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -394,7 +435,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Add override for a rule
-  app.post("/api/review/:id/override", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/review/:id/override", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -416,7 +457,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Add comment or reply to thread
-  app.post("/api/review/:id/comment", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/review/:id/comment", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -438,7 +479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Resolve a thread
-  app.post("/api/review/:id/comment/:threadId/resolve", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/review/:id/comment/:threadId/resolve", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       const threadId = req.params.threadId;
@@ -457,7 +498,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
   // Review sign-off (FIXED: Use server-side role enforcement)
-  app.post("/api/review/:id/signoff", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/review/:id/signoff", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -519,7 +560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update tab data (e.g., subject, market, etc.)
-  app.put("/api/orders/:id/tabs/:tab", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/tabs/:tab", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       const tabKey = req.params.tab as TabKey;
@@ -589,7 +630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sign-off tab
-  app.post("/api/orders/:id/tabs/:tab/signoff", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/tabs/:tab/signoff", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { action, overrideReason } = req.body;
       
@@ -636,7 +677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update tab QC
-  app.post("/api/orders/:id/tabs/:tab/review", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/tabs/:tab/review", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const order = await storage.updateTabQC(req.params.id, req.params.tab as any, req.body);
       res.json(order);
@@ -668,7 +709,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create new user weight profile
-  app.post("/api/weights/profiles", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/weights/profiles", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { name, description, weights, constraints } = req.body;
       
@@ -702,7 +743,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update user weight profile
-  app.put("/api/weights/profiles/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/weights/profiles/:id", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { name, description, weights, constraints } = req.body;
       const profileId = req.params.id;
@@ -740,7 +781,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete user weight profile
-  app.delete("/api/weights/profiles/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/weights/profiles/:id", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const profileId = req.params.id;
       await storage.deleteUserProfile(profileId);
@@ -770,7 +811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update order weights
-  app.put("/api/orders/:id/weights", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/weights", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       const { weights, constraints, activeProfileId } = req.body;
@@ -801,7 +842,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Reset order weights to shop defaults
-  app.post("/api/orders/:id/weights/reset", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/weights/reset", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       const orderWeights = await storage.resetOrderWeights(orderId, req.user!.fullName);
@@ -847,7 +888,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Save market polygon
-  app.put("/api/orders/:id/market/polygon", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/market/polygon", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       const { polygon } = req.body;
@@ -869,7 +910,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete market polygon
-  app.delete("/api/orders/:id/market/polygon", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/orders/:id/market/polygon", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       await storage.deleteMarketPolygon(orderId);
@@ -891,7 +932,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update comp selection state
-  app.put("/api/orders/:id/comps/selection", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/comps/selection", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -912,7 +953,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Lock/unlock a comp
-  app.post("/api/orders/:id/comps/lock", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/comps/lock", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -934,7 +975,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Swap comp positions
-  app.post("/api/orders/:id/comps/swap", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/comps/swap", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -972,7 +1013,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Add ATTOM sales as comparables
-  app.post("/api/orders/:id/comps/add-attom-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/comps/add-attom-sales", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1019,7 +1060,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication Routes
 
   // Register new user
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", requireSameOrigin, async (req, res) => {
     try {
       const userData = insertUserSchema.parse(req.body);
       
@@ -1048,7 +1089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Login user
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", limitHandler(10, 60_000), async (req, res) => {
     try {
       const { username, password } = req.body;
       
@@ -1083,7 +1124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Logout user
-  app.post("/api/auth/logout", (req, res) => {
+  app.post("/api/auth/logout", requireSameOrigin, (req, res) => {
     req.session.destroy((err: any) => {
       if (err) {
         return res.status(500).json({ message: "Could not log out" });
@@ -1186,7 +1227,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload photos (supports multiple files)
-  app.post("/api/orders/:id/photos/upload", requireAuth, (req, res, next) => {
+  app.post("/api/orders/:id/photos/upload", requireAuth, limitHandler(30, 60_000), requireSameOrigin, (req, res, next) => {
     upload.array('photos', 10)(req, res, (err: any) => {
       if (err) {
         if (err.code === 'LIMIT_FILE_SIZE') {
@@ -1299,7 +1340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update photo metadata
-  app.put("/api/orders/:id/photos/:photoId", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/photos/:photoId", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { id: orderId, photoId } = req.params;
       
@@ -1327,7 +1368,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete photo
-  app.delete("/api/orders/:id/photos/:photoId", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/orders/:id/photos/:photoId", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { id: orderId, photoId } = req.params;
       
@@ -1347,7 +1388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update photo masks (for blurring/redaction)
-  app.post("/api/orders/:id/photos/:photoId/masks", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/photos/:photoId/masks", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { id: orderId, photoId } = req.params;
       
@@ -1375,7 +1416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Process photo (apply blur masks)
-  app.post("/api/orders/:id/photos/:photoId/process", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/photos/:photoId/process", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { id: orderId, photoId } = req.params;
       
@@ -1395,7 +1436,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Bulk update photos
-  app.post("/api/orders/:id/photos/bulk-update", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/photos/bulk-update", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1440,7 +1481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update photo addenda
-  app.put("/api/orders/:id/photos/addenda", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/photos/addenda", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1466,7 +1507,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Export addenda to PDF
-  app.post("/api/orders/:id/photos/addenda/export", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/photos/addenda/export", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1521,7 +1562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update market settings
-  app.put("/api/orders/:id/market/settings", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/market/settings", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1564,7 +1605,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Seed market records (dev only)
-  app.post("/api/orders/:id/market/records/seed", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/market/records/seed", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1581,7 +1622,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Compute MCR metrics
-  app.post("/api/orders/:id/market/mcr/compute", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/market/mcr/compute", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1636,7 +1677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update time adjustments
-  app.put("/api/orders/:id/market/time-adjustments", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/market/time-adjustments", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1664,7 +1705,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ===== ADJUSTMENTS API ROUTES =====
 
   // Compute adjustments using 3 engines (regression, cost, paired)
-  app.post("/api/orders/:id/adjustments/compute", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/adjustments/compute", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1707,7 +1748,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update engine settings
-  app.put("/api/orders/:id/adjustments/settings", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/orders/:id/adjustments/settings", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1739,7 +1780,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update attribute overrides
-  app.patch("/api/orders/:id/adjustments/overrides", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.patch("/api/orders/:id/adjustments/overrides", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1762,7 +1803,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Apply adjustments to comps
-  app.post("/api/orders/:id/adjustments/apply", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:id/adjustments/apply", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const orderId = req.params.id;
       
@@ -1812,7 +1853,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Request delivery for an order
-  app.post("/api/delivery/request", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/delivery/request", requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const validatedRequest = deliveryRequestSchema.parse(req.body);
       
@@ -1848,6 +1889,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Generate MISMO UAD XML if requested
       if (validatedRequest.formats.includes('uad_xml')) {
         try {
+          const mcr = await storage.getMcrMetrics(validatedRequest.orderId);
+          const timeAdj = await storage.getTimeAdjustments(validatedRequest.orderId);
+          const effective = timeAdj?.effectiveDateISO || order.effectiveDate || order.dueDate || new Date().toISOString();
+
           const uadInput = {
             orderId: validatedRequest.orderId,
             subject: {
@@ -1871,15 +1916,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               adjustedValue: comp.salePrice
             })),
             timeAdjustment: {
-              basis: (adjustmentsBundle as any)?.timeAdjustment?.basis || 'market_conditions',
-              rate: (adjustmentsBundle as any)?.timeAdjustment?.rate || 0,
-              effectiveDate: order.dueDate || new Date().toISOString()
+              basis: timeAdj?.basis ?? 'salePrice',
+              pctPerMonth: timeAdj?.pctPerMonth ?? 0,
+              effectiveDateISO: effective
             },
             marketMetrics: {
-              trendPerMonth: 0.5,
-              monthsOfInventory: 4.2,
-              daysOnMarket: 45,
-              salePriceToListPrice: 0.98
+              trendPctPerMonth: mcr?.trendPctPerMonth ?? 0,
+              monthsOfInventory: mcr?.monthsOfInventory ?? null,
+              domMedian: mcr?.domMedian ?? null,
+              spToLpMedian: mcr?.spToLpMedian ?? null
             },
             appraiser: {
               name: 'John Appraiser',
@@ -1918,17 +1963,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         for (const photo of photos) {
           try {
-            const sourcePath = path.join(process.cwd(), "uploads", (photo as any).filename);
-            const destPath = path.join(photosDir, (photo as any).filename);
-            await fs.copyFile(sourcePath, destPath);
-            const photoStats = await fs.stat(destPath);
+            // Pick blurred if available, else display
+            const photoPath = photo.processing?.blurredPath || photo.displayPath;
+            const srcAbs = path.join(process.cwd(), photoPath);
+            const safeName = path.basename(srcAbs);
+            const destAbs = path.join(photosDir, safeName);
+            await fs.copyFile(srcAbs, destAbs);
+            const photoStats = await fs.stat(destAbs);
             packageItems.push({
               type: 'photo',
-              filename: `photos/${(photo as any).filename}`,
+              filename: `photos/${safeName}`,
               size: photoStats.size
             });
           } catch (photoError) {
-            console.error(`Error copying photo ${(photo as any).filename}:`, photoError);
+            console.error(`Error copying photo ${photo.id}:`, photoError);
           }
         }
       }
@@ -2047,11 +2095,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.json(deliveryPackage);
         }
 
-        // Download specific file
-        const filePath = path.join(deliveryDir, filename);
+        // Download specific file - guard against path traversal
+        if (filename.includes('..') || path.isAbsolute(filename)) {
+          return res.status(400).json({ message: 'Invalid filename' });
+        }
+        const resolved = path.normalize(path.join(deliveryDir, filename));
+        if (!resolved.startsWith(deliveryDir + path.sep)) {
+          return res.status(403).json({ message: 'Forbidden path' });
+        }
         
         try {
-          await fs.access(filePath);
+          await fs.access(resolved);
           
           // Set appropriate content type based on file extension
           const ext = path.extname(filename).toLowerCase();
@@ -2069,7 +2123,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           res.setHeader('Content-Type', contentType);
           res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
           
-          const fileStream = fsSync.createReadStream(filePath);
+          const fileStream = fsSync.createReadStream(resolved);
           fileStream.pipe(res);
         } catch (fileError) {
           return res.status(404).json({ message: 'File not found in delivery package' });
@@ -2203,7 +2257,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update a specific feature flag
-  app.patch("/api/ops/flags/:key", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.patch("/api/ops/flags/:key", requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
       if (!['chief', 'admin'].includes(user.role)) {
@@ -2235,7 +2289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 2. AUDIT LOGGING ROUTES
 
   // Record audit event
-  app.post("/api/ops/audit", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/ops/audit", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const ip = req.ip || req.connection.remoteAddress || 'unknown';
       
@@ -2308,7 +2362,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 3. TELEMETRY ROUTES
 
   // Record telemetry point
-  app.post("/api/ops/telemetry", async (req, res) => {
+  app.post("/api/ops/telemetry", requireSameOrigin, async (req, res) => {
     try {
       const ip = req.ip || req.connection.remoteAddress || 'unknown';
       
@@ -2445,7 +2499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 5. BACKUP ROUTES
 
   // Create order snapshot
-  app.post("/api/orders/:orderId/version/snapshot", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/orders/:orderId/version/snapshot", requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
       const { orderId } = req.params;
@@ -2521,7 +2575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Run backup rotation
-  app.post("/api/ops/backups/run-rotation", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/ops/backups/run-rotation", requireAuth, limitHandler(5, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
       if (!['chief', 'admin'].includes(user.role)) {
@@ -2580,7 +2634,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ATTOM Import Routes
   
   // Order-specific ATTOM closed sales import (client-called endpoint)
-  app.post("/api/attom/closed-sales/import", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/attom/closed-sales/import", requireAuth, limitHandler(5, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const { orderId, subjectAddress, settings } = req.body;
       
@@ -2607,7 +2661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Bulk ATTOM import by county
-  app.post("/api/attom/import/closed-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/attom/import/closed-sales", requireAuth, limitHandler(3, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
       if (!['chief', 'admin', 'appraiser'].includes(user.role)) {
@@ -2637,7 +2691,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/attom/import/parcels", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/attom/import/parcels", requireAuth, limitHandler(3, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
       if (!['chief', 'admin', 'appraiser'].includes(user.role)) {
@@ -2668,7 +2722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ATTOM Subject Lookup
-  app.post("/api/attom/subject/lookup", requireAuth, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/attom/subject/lookup", requireAuth, limitHandler(20, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
       if (!['chief', 'admin', 'appraiser'].includes(user.role)) {

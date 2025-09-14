@@ -37,3 +37,8 @@
 {"at":"2025-09-14T16:56:17.314Z","k":"attom_closed_sales_count","v":2,"dims":{"county":"Orange"}}
 {"at":"2025-09-14T16:56:17.316Z","k":"attom_import_added","v":0,"dims":{"county":"Orange"}}
 {"at":"2025-09-14T17:00:38.948Z","v":null,"dims":{}}
+{"at":"2025-09-14T17:36:34.641Z","k":"time_adj_pct","v":0.4756445592456582,"dims":{"basis":"salePrice","orderId":"order-123"}}
+{"at":"2025-09-14T17:38:04.328Z","k":"attom_closed_sales_count","v":0,"dims":{"county":"Orange"}}
+{"at":"2025-09-14T17:38:04.331Z","k":"attom_import_added","v":0,"dims":{"county":"Orange"}}
+{"at":"2025-09-14T18:40:30.486Z","k":"attom_closed_sales_count","v":0,"dims":{"county":"Orange"}}
+{"at":"2025-09-14T18:40:30.486Z","k":"attom_import_added","v":0,"dims":{"county":"Orange"}}

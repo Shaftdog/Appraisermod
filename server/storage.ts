@@ -8,7 +8,9 @@ import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import fs from "fs";
+import fsPromises from "fs/promises";
 import path from "path";
+import sharp from "sharp";
 import { computeMarketMetrics } from "@shared/marketStats";
 import { format, subMonths, addMonths } from "date-fns";
 import { type ClosedSale } from "@shared/attom";
@@ -864,7 +866,31 @@ export class DatabaseStorage implements IStorage {
   private photosByOrder: Map<string, PhotoMeta[]> = new Map();
   private photoAddendas: Map<string, PhotoAddenda> = new Map();
 
+  private photosJsonPath(orderId: string) {
+    return path.join(process.cwd(), 'data', 'orders', orderId, 'photos', 'photos.json');
+  }
+
+  private async readPhotosJson(orderId: string): Promise<PhotoMeta[]> {
+    try {
+      const p = this.photosJsonPath(orderId);
+      const buf = await fsPromises.readFile(p, 'utf8');
+      return JSON.parse(buf);
+    } catch { 
+      return []; 
+    }
+  }
+
+  private async writePhotosJson(orderId: string, list: PhotoMeta[]): Promise<void> {
+    const p = this.photosJsonPath(orderId);
+    await fsPromises.mkdir(path.dirname(p), { recursive: true });
+    await fsPromises.writeFile(p, JSON.stringify(list, null, 2), 'utf8');
+  }
+
   async getPhotos(orderId: string): Promise<PhotoMeta[]> {
+    if (!this.photosByOrder.has(orderId)) {
+      const fromDisk = await this.readPhotosJson(orderId);
+      this.photosByOrder.set(orderId, fromDisk);
+    }
     return this.photosByOrder.get(orderId) || [];
   }
 
@@ -887,7 +913,7 @@ export class DatabaseStorage implements IStorage {
 
     const photos = await this.getPhotos(orderId);
     photos.push(photo);
-    this.photosByOrder.set(orderId, photos);
+    await this.writePhotosJson(orderId, photos);
 
     return photo;
   }
@@ -908,6 +934,7 @@ export class DatabaseStorage implements IStorage {
 
     photos[photoIndex] = updatedPhoto;
     this.photosByOrder.set(orderId, photos);
+    await this.writePhotosJson(orderId, photos);
 
     return updatedPhoto;
   }
@@ -921,6 +948,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     this.photosByOrder.set(orderId, filteredPhotos);
+    await this.writePhotosJson(orderId, filteredPhotos);
 
     // Also remove from addenda if present
     const addenda = await this.getPhotoAddenda(orderId);
@@ -959,16 +987,55 @@ export class DatabaseStorage implements IStorage {
       throw new Error('Photo not found');
     }
 
-    // Simulate processing delay in real implementation
-    const blurredPath = photo.displayPath.replace('.jpg', '_blurred.jpg');
-    
+    const inputPath = path.join(process.cwd(), photo.displayPath);
+    const img = sharp(inputPath);
+    const meta = await img.metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+
+    const rects = photo.masks?.rects ?? [];
+    const brush = photo.masks?.brush ?? [];
+
+    // Build mask SVG (white = blur regions)
+    const maskSvg = this.svgMaskForPhoto(width, height, rects, brush);
+    const maskPng = await sharp(maskSvg).png().toBuffer();
+
+    // Precompute a blurred full image
+    const blurred = await sharp(inputPath).blur(12).toBuffer();
+
+    // Composite: (blurred ∩ mask) over original
+    const maskedBlur = await sharp(blurred)
+      .composite([{ input: maskPng, blend: 'dest-in' }])
+      .toBuffer();
+
+    const outPathAbs = inputPath.replace(/(\.[\w]+)$/, '_blurred$1');
+    const outRel = outPathAbs.replace(process.cwd() + path.sep, '');
+
+    await sharp(inputPath)
+      .composite([{ input: maskedBlur, blend: 'over' }])
+      .jpeg({ quality: 85 })
+      .toFile(outPathAbs);
+
+    // Persist processing metadata
     return this.updatePhoto(orderId, photoId, {
       processing: {
-        blurredPath,
+        blurredPath: outRel,
         processingStatus: 'completed',
         lastProcessedAt: new Date().toISOString()
       }
     });
+  }
+
+  private svgMaskForPhoto(width: number, height: number, rects: Array<{ x: number; y: number; w: number; h: number; radius?: number }>, brush: Array<{ points: Array<{x: number; y: number}>; radius: number; strength: number }>): Buffer {
+    // Build an SVG mask: rects + brush as circles along stroke points
+    const rectEls = rects.map(r => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${r.radius ?? 0}" ry="${r.radius ?? 0}" />`).join('');
+    const circleEls = brush.flatMap(b => b.points.map(p => `<circle cx="${p.x}" cy="${p.y}" r="${b.radius}" />`)).join('');
+    return Buffer.from(
+      `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+         <rect width="100%" height="100%" fill="black"/>
+         <g fill="white">${rectEls}${circleEls}</g>
+       </svg>`
+    );
   }
 
   async bulkUpdatePhotos(orderId: string, photoIds: string[], updates: { category?: PhotoCategory; captionPrefix?: string }): Promise<PhotoMeta[]> {
@@ -1395,6 +1462,16 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error('ATTOM import error:', error);
       throw new Error(`Failed to import ATTOM data: ${error.message}`);
+    }
+  }
+
+  async getMcrMetrics(orderId: string): Promise<McrMetrics | null> {
+    const p = path.join(this.getMarketDataPath(orderId), 'mcr.json');
+    try { 
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8')); 
+      return data;
+    } catch { 
+      return null; 
     }
   }
 
