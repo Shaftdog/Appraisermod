@@ -3,6 +3,7 @@ import path from 'path';
 import { ATTOM } from '../../config/attom';
 import { attomGet } from './client';
 import { stableSaleId } from './saleId';
+import { kpi } from '../../lib/telemetry';
 
 const DATA_ROOT = 'data/attom';
 
@@ -29,6 +30,10 @@ async function updateManifest(county: string, added: number, total: number) {
   manifest.counts[county] = total;
   
   await atomicWrite(manifestPath, manifest);
+  
+  // Record telemetry counters (fire-and-forget, non-blocking)
+  kpi('attom_closed_sales_count', total, { county });
+  kpi('attom_import_added', added, { county });
 }
 
 export async function importClosedSales(county: string, monthsBack = ATTOM.monthsBackClosedSales) {
@@ -120,10 +125,13 @@ export async function importClosedSales(county: string, monthsBack = ATTOM.month
 
   await atomicWrite(file, merged);
   
-  // Update manifest
-  await updateManifest(county, normalized.length, merged.length);
+  // Calculate correctly: added = newly merged records, not all fetched records
+  const actuallyAdded = merged.length - existing.length;
   
-  return { county, added: normalized.length, total: merged.length, file };
+  // Update manifest
+  await updateManifest(county, actuallyAdded, merged.length);
+  
+  return { county, added: actuallyAdded, total: merged.length, file };
 }
 
 export async function importParcels(county: string) {

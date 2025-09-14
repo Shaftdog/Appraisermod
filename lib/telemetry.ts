@@ -18,8 +18,9 @@ export function kpi(k: TelemetryPoint['k'], v: number, dims: TelemetryPoint['dim
     dims
   };
   
-  // Use beacon API for reliability, fallback to fetch
+  // Use beacon API for reliability in browser, absolute URL for server
   if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+    // Browser environment - use beacon with relative URL
     const blob = new Blob([JSON.stringify({ 
       at: new Date().toISOString(), 
       ...telemetryPoint 
@@ -27,18 +28,38 @@ export function kpi(k: TelemetryPoint['k'], v: number, dims: TelemetryPoint['dim
     
     navigator.sendBeacon('/api/ops/telemetry', blob);
   } else if (typeof fetch !== 'undefined') {
-    // Fallback for environments without beacon API
-    fetch('/api/ops/telemetry', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        at: new Date().toISOString(), 
-        ...telemetryPoint 
-      }),
-      credentials: 'include'
-    }).catch(() => {
-      // Silent fail to not disrupt user experience
-    });
+    // Server environment or browser fallback
+    const baseUrl = typeof window === 'undefined' 
+      ? process.env.APP_ORIGIN || `http://localhost:${process.env.PORT || 5000}`
+      : '';
+    const url = baseUrl + '/api/ops/telemetry';
+    
+    // Use queueMicrotask for server environments to ensure non-blocking
+    const sendTelemetry = () => {
+      try {
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            at: new Date().toISOString(), 
+            ...telemetryPoint 
+          }),
+          credentials: typeof window !== 'undefined' ? 'include' : 'omit'
+        }).catch(() => {
+          // Silent fail to not disrupt operation
+        });
+      } catch {
+        // Silent fail for any synchronous errors
+      }
+    };
+    
+    if (typeof window === 'undefined') {
+      // Server environment - use queueMicrotask for fire-and-forget
+      queueMicrotask(sendTelemetry);
+    } else {
+      // Browser environment - send immediately
+      sendTelemetry();
+    }
   }
 }
 
