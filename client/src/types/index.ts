@@ -8,6 +8,7 @@ export type TabKey =
   | 'sketch'
   | 'photos'
   | 'cost'
+  | 'habu'
   | 'reconciliation'
   | 'activity'
   | 'qcSignoff'
@@ -61,6 +62,7 @@ export const TAB_LABELS: Record<TabKey, string> = {
   sketch: 'Sketch',
   photos: 'Photos',
   cost: 'Cost',
+  habu: 'HABU',
   reconciliation: 'Reconciliation',
   activity: 'Activity',
   qcSignoff: 'QC & Sign-off',

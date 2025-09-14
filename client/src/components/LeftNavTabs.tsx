@@ -31,6 +31,7 @@ export function LeftNavTabs({ order }: LeftNavTabsProps) {
     'sketch',
     'photos',
     'cost',
+    'habu',
     'reconciliation',
     'activity',
     'qcSignoff',
