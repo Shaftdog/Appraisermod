@@ -56,6 +56,7 @@ const signoffSchema = z.union([
   }).transform(data => ({ accept: true, reason: data.message }))
 ]);
 import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, DEFAULT_ENGINE_SETTINGS, normalizeEngineWeights } from "@shared/adjustments";
+import { habuInputsSchema, habuNotesSchema } from "@shared/habu";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
 import multer from "multer";
@@ -1697,6 +1698,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const timeAdjustments = await storage.updateTimeAdjustments(orderId, validationResult.data);
       res.json(timeAdjustments);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ===== HABU (HIGHEST & BEST USE) API ROUTES =====
+
+  // Get HABU state
+  app.get("/api/orders/:id/habu", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const habuState = await storage.getHabuState(orderId);
+      res.json(habuState);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Save HABU inputs
+  app.put("/api/orders/:id/habu/inputs", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Validate HABU inputs using shared schema
+      const validationResult = habuInputsSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid HABU inputs", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const habuState = await storage.saveHabuInputs(orderId, validationResult.data);
+      
+      // Audit log
+      console.log(`[HABU_AUDIT] User ${req.user!.username} saved HABU inputs for order ${orderId}`);
+      
+      res.json(habuState);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Compute HABU analysis
+  app.post("/api/orders/:id/habu/compute", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const result = await storage.computeHabu(orderId);
+      
+      // Audit log
+      console.log(`[HABU_AUDIT] User ${req.user!.username} computed HABU analysis for order ${orderId}. Top use: ${result.asIfVacantConclusion.use}`);
+      
+      res.json(result);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('inputs not found')) {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update HABU notes
+  app.put("/api/orders/:id/habu/notes", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Validate notes using shared schema
+      const validationResult = habuNotesSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid notes data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const habuState = await storage.updateHabuNotes(orderId, validationResult.data);
+      
+      // Audit log
+      console.log(`[HABU_AUDIT] User ${req.user!.username} updated HABU notes for order ${orderId}`);
+      
+      res.json(habuState);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('not found')) {
+        return res.status(404).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Fetch zoning data (stub)
+  app.post("/api/orders/:id/habu/zoning/fetch", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const zoningData = await storage.fetchZoningStub(orderId);
+      
+      // Audit log
+      console.log(`[HABU_AUDIT] User ${req.user!.username} fetched zoning data for order ${orderId}`);
+      
+      res.json(zoningData);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
     }

@@ -1,7 +1,16 @@
+import { z } from 'zod';
+
 export type UseCategory =
   | 'singleFamily' | 'multiFamily' | 'townhome' | 'condo'
   | 'office' | 'retail' | 'industrial' | 'mixedUse'
   | 'ag' | 'specialPurpose' | 'vacantResidential' | 'vacantCommercial';
+
+// Zod schema for UseCategory enum to prevent invalid string values
+export const useCategorySchema = z.enum([
+  'singleFamily', 'multiFamily', 'townhome', 'condo',
+  'office', 'retail', 'industrial', 'mixedUse',
+  'ag', 'specialPurpose', 'vacantResidential', 'vacantCommercial'
+]);
 
 export interface ZoningData {
   source: 'manual' | 'provider' | 'countyGIS';
@@ -497,6 +506,113 @@ export function generateNarrative(state: HabuState): string {
 
   return narrative;
 }
+
+// Zod schemas for data validation
+export const zoningDataSchema = z.object({
+  source: z.enum(['manual', 'provider', 'countyGIS']),
+  code: z.string().optional(),
+  description: z.string().optional(),
+  allowedUses: z.array(useCategorySchema), // Use proper enum validation
+  minLotSizeSqft: z.number().optional(),
+  maxDensityDUA: z.number().optional(),
+  maxHeightFt: z.number().optional(),
+  setbacks: z.object({
+    front: z.number().optional(),
+    side: z.number().optional(),
+    rear: z.number().optional()
+  }).optional(),
+  notes: z.string().optional(),
+  fetchedAt: z.string().optional(),
+  providerRef: z.string().optional()
+});
+
+export const habuInputsSchema = z.object({
+  asOfDateISO: z.string(),
+  asIfVacant: z.boolean(),
+  subject: z.object({
+    siteAreaSqft: z.number().optional(),
+    topography: z.enum(['level', 'sloped', 'irregular']).optional(),
+    utilities: z.object({
+      water: z.boolean(),
+      sewer: z.boolean(),
+      electric: z.boolean(),
+      gas: z.boolean().optional()
+    }).optional(),
+    access: z.enum(['arterial', 'collector', 'local', 'easement']).optional(),
+    exposure: z.enum(['corner', 'interior', 'flag']).optional(),
+    gla: z.number().optional(),
+    yearBuilt: z.number().optional(),
+    condition: z.number().min(1).max(5).optional(),
+    quality: z.number().min(1).max(5).optional(),
+    parking: z.number().optional()
+  }),
+  zoning: zoningDataSchema,
+  marketSignals: z.object({
+    trendPctPerMonth: z.number().optional(),
+    monthsOfInventory: z.number().optional(),
+    spToLpMedian: z.number().optional(),
+    domMedian: z.number().optional()
+  }),
+  costSignals: z.object({
+    replacementCostUsdPerSf: z.number().optional(),
+    externalObsolPct: z.number().optional(),
+    physicalDepreciationPct: z.number().optional()
+  }).optional(),
+  candidateUses: z.array(useCategorySchema) // Use proper enum validation
+});
+
+export const habuNotesSchema = z.object({
+  reviewerNotes: z.string().optional(),
+  appraiserNotes: z.string().optional()
+});
+
+export const habuTestScoreSchema = z.object({
+  label: z.enum(['Physically Possible', 'Legally Permissible', 'Financially Feasible', 'Maximally Productive']),
+  score: z.number().min(0).max(1),
+  rationale: z.string(),
+  evidence: z.array(z.string())
+});
+
+export const useEvaluationSchema = z.object({
+  use: useCategorySchema,
+  tests: z.array(habuTestScoreSchema),
+  composite: z.number().min(0).max(1),
+  flags: z.array(z.enum(['zoningConflict', 'utilityConstraint', 'siteConstraint', 'marketWeak', 'costUnfavorable']))
+});
+
+export const habuResultSchema = z.object({
+  asIfVacantConclusion: z.object({
+    use: useCategorySchema,
+    composite: z.number().min(0).max(1),
+    confidence: z.number().min(0).max(1),
+    narrative: z.string()
+  }),
+  asImprovedConclusion: z.object({
+    use: useCategorySchema,
+    composite: z.number().min(0).max(1),
+    confidence: z.number().min(0).max(1),
+    narrative: z.string()
+  }).optional(),
+  rankedUses: z.array(useEvaluationSchema),
+  weights: z.object({
+    physical: z.number().min(0).max(1),
+    legal: z.number().min(0).max(1),
+    financial: z.number().min(0).max(1),
+    productive: z.number().min(0).max(1)
+  }),
+  version: z.string(),
+  generatedAt: z.string(),
+  author: z.string().optional()
+});
+
+export const habuStateSchema = z.object({
+  orderId: z.string(),
+  inputs: habuInputsSchema,
+  result: habuResultSchema.optional(),
+  reviewerNotes: z.string().optional(),
+  appraiserNotes: z.string().optional(),
+  updatedAt: z.string()
+});
 
 export function createDefaultWeights() {
   return {
