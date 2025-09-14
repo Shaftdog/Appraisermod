@@ -2235,17 +2235,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.json(deliveryPackage);
         }
 
-        // Download specific file - guard against path traversal
-        if (filename.includes('..') || path.isAbsolute(filename)) {
-          return res.status(400).json({ message: 'Invalid filename' });
-        }
-        const resolved = path.normalize(path.join(deliveryDir, filename));
-        if (!resolved.startsWith(deliveryDir + path.sep)) {
+        // Download specific file - enhanced path traversal guard
+        const safeBase = path.resolve(deliveryDir);
+        const candidate = path.resolve(path.join(safeBase, filename));
+        
+        if (!candidate.startsWith(safeBase + path.sep) && candidate !== safeBase) {
           return res.status(403).json({ message: 'Forbidden path' });
         }
         
+        // Additional safety checks
+        if (filename.includes('..') || path.isAbsolute(filename) || /[\x00-\x1f]/.test(filename)) {
+          return res.status(403).json({ message: 'Invalid filename' });
+        }
+        
         try {
-          await fs.access(resolved);
+          await fs.access(candidate);
           
           // Set appropriate content type based on file extension
           const ext = path.extname(filename).toLowerCase();
@@ -2263,7 +2267,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           res.setHeader('Content-Type', contentType);
           res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
           
-          const fileStream = fsSync.createReadStream(resolved);
+          const fileStream = fsSync.createReadStream(candidate);
           fileStream.pipe(res);
         } catch (fileError) {
           return res.status(404).json({ message: 'File not found in delivery package' });
