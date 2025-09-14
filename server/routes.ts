@@ -2001,11 +2001,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deliveryId = `delivery-${validatedRequest.orderId}-${Date.now()}`;
       
       // Get order components needed for delivery
-      const [subject, comps, adjustmentsBundle, photos] = await Promise.all([
+      const [subject, comps, adjustmentsBundle, photos, habuState] = await Promise.all([
         storage.getSubject(validatedRequest.orderId),
         storage.getCompsWithScoring(validatedRequest.orderId).then(result => result.comps),
         storage.getAdjustmentsBundle(validatedRequest.orderId),
-        storage.getPhotos(validatedRequest.orderId)
+        storage.getPhotos(validatedRequest.orderId),
+        storage.getHabuState(validatedRequest.orderId).catch(() => null) // Optional HABU data
       ]);
 
       // Create delivery package directory
@@ -2061,7 +2062,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             },
             effectiveDate: order.dueDate || new Date().toISOString(),
             intendedUse: 'Purchase',
-            reconciledValue: (adjustmentsBundle as any)?.finalValue
+            reconciledValue: (adjustmentsBundle as any)?.finalValue,
+            habuState: habuState // HABU integration for MISMO XML
           };
 
           const { xml, validation } = buildUAD26XML(uadInput);
