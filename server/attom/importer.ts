@@ -80,7 +80,8 @@ export async function importClosedSales(
   }
 
   // Normalize minimal fields into ClosedSale[]
-  const normalized = sales.map((s: any) => {
+  // Filter out any undefined/null sales before processing
+  const normalized = sales.filter((s: any) => s && typeof s === 'object').map((s: any) => {
     const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
     const closeDate = s?.saleTransDate || s?.sale?.saleDate;
     const closePrice = Number(s?.saleAmount || s?.sale?.amount || 0);

@@ -13,7 +13,7 @@ export interface AuditEvent {
 
 export interface TelemetryPoint {
   at: string;             // ISO
-  k: 'export_time_ms'|'pdf_pages'|'review_red_hits'|'qc_status'|'time_adj_pct'|'delivery_size_bytes';
+  k: 'export_time_ms'|'pdf_pages'|'review_red_hits'|'qc_status'|'time_adj_pct'|'delivery_size_bytes'|'attom_closed_sales_count'|'attom_import_added';
   v: number;
   dims?: Record<string,string|number>; // {orderId:'123', tab:'photos'}
 }
