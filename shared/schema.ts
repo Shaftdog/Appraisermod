@@ -222,6 +222,7 @@ export interface CompProperty {
   score?: number; // calculated score 0-1
   band?: ScoreBand;
   isInsidePolygon?: boolean;
+  source?: 'attom' | 'manual' | 'mls'; // Data source indicator
   scoreBreakdown?: {
     distance: { similarity: number; weight: number; contribution: number; };
     recency: { similarity: number; weight: number; contribution: number; };

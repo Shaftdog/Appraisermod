@@ -842,7 +842,8 @@ export class DatabaseStorage implements IStorage {
         latlng: { lat: sale.lat || 30.2730, lng: sale.lon || -97.7431 }, // Default to subject location if missing
         gla: sale.gla || 1800, // Default GLA if missing
         quality: 4, // Default quality rating
-        condition: 4 // Default condition rating
+        condition: 4, // Default condition rating
+        source: 'attom' // Mark as ATTOM-sourced for UI badges
       };
       
       return comp;

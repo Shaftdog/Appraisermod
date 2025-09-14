@@ -625,6 +625,9 @@ export default function Market() {
                             <span className="font-medium">ATTOM Data Active:</span>
                             <span>{attomClosedSales.length} closed sales within {attomImportSettings.radiusMiles} miles</span>
                           </div>
+                          <div className="mt-2 text-xs text-blue-600 dark:text-blue-300" data-testid="footer-attom-attribution">
+                            Source: ATTOM Data Solutions
+                          </div>
                         </div>
                       )}
                     </div>

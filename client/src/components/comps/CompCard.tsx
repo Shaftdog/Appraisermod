@@ -142,6 +142,20 @@ export function CompCard({
                   In Market
                 </Badge>
               )}
+              {comp.source === 'attom' && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="outline" className="text-xs bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-900 dark:text-blue-200" data-testid={`badge-attom-${comp.id}`}>
+                        ATTOM
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Public record closed sale</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
             </div>
             
             <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100 truncate">
