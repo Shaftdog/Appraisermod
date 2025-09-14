@@ -1,12 +1,35 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { randomUUID } from 'crypto';
 import { ATTOM } from '../../config/attom';
 import { attomGet } from './client';
+import { stableSaleId } from './saleId';
 
 const DATA_ROOT = 'data/attom';
 
 function ensureDir(p: string) { return fs.mkdir(p, { recursive: true }); }
+
+async function backoff(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+async function atomicWrite(file: string, json: any) {
+  const tmp = file + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(json, null, 2), 'utf8');
+  await fs.rename(tmp, file);
+}
+
+async function updateManifest(county: string, added: number, total: number) {
+  const manifestPath = path.join(DATA_ROOT, 'manifest.json');
+  let manifest: any = {};
+  
+  try {
+    manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  } catch {}
+  
+  manifest.lastRunISO = new Date().toISOString();
+  manifest.counts = manifest.counts || {};
+  manifest.counts[county] = total;
+  
+  await atomicWrite(manifestPath, manifest);
+}
 
 export async function importClosedSales(county: string, monthsBack = ATTOM.monthsBackClosedSales) {
   const key = process.env.ATTOM_API_KEY!;
@@ -21,9 +44,24 @@ export async function importClosedSales(county: string, monthsBack = ATTOM.month
   let page = 1, maxPages = 20;
   const sales: any[] = [];
   while (page <= maxPages) {
-    const data = await attomGet('/propertyapi/v1.0.0/saleshistory/snapshot', key, {
-      countyname: county, state: 'FL', page, pagesize: 100, startdate: sinceIso
-    }).catch(err => { console.error('ATTOM sales error', err.message); return { sales: [] }; });
+    let tries = 0;
+    let data: any;
+    while (tries < 3) {
+      try {
+        data = await attomGet('/propertyapi/v1.0.0/saleshistory/snapshot', key, {
+          countyname: county, state: 'FL', page, pagesize: 100, startdate: sinceIso
+        });
+        break;
+      } catch (e: any) {
+        tries++;
+        if (tries >= 3) {
+          console.error('ATTOM sales error after retries', e.message);
+          data = { sales: [] };
+          break;
+        }
+        await backoff(tries === 1 ? 500 : 1500);
+      }
+    }
 
     const items = (data?.sales || data?.property || []);
     if (!items.length) break;
@@ -34,25 +72,58 @@ export async function importClosedSales(county: string, monthsBack = ATTOM.month
   // Normalize minimal fields into ClosedSale[]
   const normalized = sales.map((s: any) => {
     const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
+    const closeDate = s?.saleTransDate || s?.sale?.saleDate;
+    const closePrice = Number(s?.saleAmount || s?.sale?.amount || 0);
+    const apn = s?.identifier?.apn || s?.identifier?.apnOriginal;
+    
+    const saleId = stableSaleId({
+      county,
+      closeDate,
+      closePrice,
+      apn,
+      address
+    });
+    
     return {
-      id: randomUUID(), // Assign stable unique identifier
-      apn: s?.identifier?.apn || s?.identifier?.apnOriginal,
+      id: saleId, // Use stable deterministic identifier
+      saleId, // Also store as saleId field for clarity
+      apn,
       address,
       city: s?.address?.city,
       state: s?.address?.state,
       zip: s?.address?.zip,
-      closeDate: s?.saleTransDate || s?.sale?.saleDate,
-      closePrice: Number(s?.saleAmount || s?.sale?.amount || 0),
+      closeDate,
+      closePrice,
       gla: Number(s?.building?.size?.grossSize || s?.building?.size?.universalsize || s?.building?.size?.livingsize || 0),
       lotSizeSqft: Number(s?.lot?.lotSize1 || s?.lot?.lotSize || 0),
       lat: s?.location?.latitude, lon: s?.location?.longitude
     };
   }).filter((x: any) => x.closeDate && x.closePrice);
 
-  await ensureDir(path.join(DATA_ROOT, 'closed_sales'));
-  const out = path.join(DATA_ROOT, 'closed_sales', `FL_${county.replace(/\s+/g,'')}.json`);
-  await fs.writeFile(out, JSON.stringify(normalized, null, 2), 'utf8');
-  return { file: out, count: normalized.length };
+  const dir = path.join(DATA_ROOT, 'closed_sales');
+  await ensureDir(dir);
+  const file = path.join(dir, `FL_${county.replace(/\s+/g,'')}.json`);
+
+  // Load existing data and deduplicate by saleId
+  let existing: any[] = [];
+  try {
+    existing = JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch {}
+
+  const map = new Map<string, any>();
+  for (const r of existing) map.set(r.saleId || '', r);
+  for (const r of normalized) map.set(r.saleId, r);
+
+  const merged = Array.from(map.values())
+    .filter(x => x.saleId)
+    .sort((a, b) => (b.closeDate || '').localeCompare(a.closeDate || '') || (b.saleId.localeCompare(a.saleId)));
+
+  await atomicWrite(file, merged);
+  
+  // Update manifest
+  await updateManifest(county, normalized.length, merged.length);
+  
+  return { county, added: normalized.length, total: merged.length, file };
 }
 
 export async function importParcels(county: string) {

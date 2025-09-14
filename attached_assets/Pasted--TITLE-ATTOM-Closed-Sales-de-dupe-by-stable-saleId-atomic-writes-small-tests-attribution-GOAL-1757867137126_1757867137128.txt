@@ -1,0 +1,133 @@
+
+TITLE ATTOM Closed-Sales: de-dupe by stable saleId + atomic writes + small tests + attribution
+GOAL Stop duplicate ATTOM sales on re-import. Make writes safe. Add a tiny test. Add source badges and a couple ops counters.
+
+1) Add a stable saleId
+Create server/attom/saleId.ts:
+import crypto from 'crypto';
+
+export function stableSaleId(input: {
+  county: string;
+  closeDate: string;      // ISO yyyy-mm-dd
+  closePrice: number;     // whole dollars ok
+  apn?: string;
+  address?: string;       // one-line address, optional fallback
+}) {
+  const key = [
+    input.county.trim().toUpperCase(),
+    (input.apn || '').replace(/\W+/g, '').toUpperCase(),
+    (input.address || '').replace(/\s+/g, ' ').trim().toUpperCase(),
+    input.closeDate.slice(0, 10),
+    Math.round(input.closePrice),
+  ].join('|');
+  return crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
+}
+
+2) Update the importer to upsert by saleId and write atomically
+Edit server/attom/importer.ts:
+* When normalizing each sale, compute saleId:
+import { stableSaleId } from './saleId';
+// ...
+const normalized = out.map((s:any)=>{ /* existing mapping */ }).filter(...).map((x:any)=>({
+  ...x,
+  saleId: stableSaleId({
+    county,
+    closeDate: x.closeDate,
+    closePrice: x.closePrice,
+    apn: x.apn,
+    address: x.address
+  })
+}));
+* Before writing the county file:
+    * If the file exists, read it and build a Map by saleId.
+    * Upsert new items into the map (replace if same saleId, else add).
+    * Sort by closeDate desc, then saleId.
+* Write atomically: write to file.tmp then rename to final.
+* Add simple retry/backoff on ATTOM 429/5xx: 500ms, then 1500ms, then give up.
+Example write section:
+async function atomicWrite(file: string, json: any) {
+  const tmp = file + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(json, null, 2), 'utf8');
+  await fs.rename(tmp, file);
+}
+
+export async function importClosedSales(county: string) {
+  // ... existing fetch loop (wrap each page with try/backoff)
+  const dir = path.join(ROOT,'closed_sales'); await ensure(dir);
+  const file = path.join(dir, `FL_${county.replace(/\s+/g,'')}.json`);
+
+  let existing: any[] = [];
+  try { existing = JSON.parse(await fs.readFile(file,'utf8')); } catch {}
+
+  const map = new Map<string, any>();
+  for (const r of existing) map.set(r.saleId || '', r);
+  for (const r of normalized) map.set(r.saleId, r);
+
+  const merged = Array.from(map.values())
+    .filter(x=>x.saleId)
+    .sort((a,b)=> (b.closeDate||'').localeCompare(a.closeDate||'') || (b.saleId.localeCompare(a.saleId)));
+
+  await atomicWrite(file, merged);
+  return { county, added: normalized.length, total: merged.length, file };
+}
+Add a tiny helper for backoff (top of file):
+async function backoff(ms:number){ return new Promise(r=>setTimeout(r, ms)); }
+Wrap each ATTOM page fetch:
+let tries=0;
+while (tries<3) {
+  try { /* call attomGet */ break; }
+  catch (e:any) {
+    tries++;
+    if (tries>=3) throw e;
+    await backoff(tries===1?500:1500);
+  }
+}
+
+3) UI badges + attribution
+* Comps list/card: if a comp came from ATTOM, show a small badge ATTOM and a tooltip “Public record closed sale”.
+* Subject and Market: show Source: ATTOM Data Solutions as a small footer line when ATTOM fields/series are displayed.
+No design overhaul—use the existing chip/badge styles.
+
+4) Rate-limit the “Refresh ATTOM Closed Sales” button
+* Button should disable itself for 10 minutes after a run per county set.
+* Store last run timestamp in data/attom/manifest.json:
+{ "lastRunISO":"2025-09-14T15:32:00Z","counts":{ "Seminole":1234,"Orange":1987 } }
+* Update manifest after each successful import.
+
+5) Ops counters (tiny)
+When import completes, append two telemetry points:
+* k='attom_closed_sales_count', v=<total merged>, dims={county}
+* k='attom_import_added', v=<added this run>, dims={county}
+Use the existing telemetry POST helper.
+
+6) One small integration test
+Create e2e/attom_dedupe.spec.ts (Playwright or supertest—your choice). Flow:
+1. POST /api/attom/import/closed-sales (for one county).
+2. Read the county JSON and get a count and the first saleId.
+3. POST import again.
+4. Read the file again:
+    * the same saleId still exists
+    * count did not increase (no duplicates)
+Make test selectors robust; skip if no key is set.
+
+7) Acceptance checklist
+* Re-importing the same county does not create duplicates.
+* County file writes are atomic (no partial files on crash).
+* “Refresh ATTOM Closed Sales” disables for 10 minutes after a run.
+* ATTOM badges/attribution visible in Subject, Market, Comps.
+* Telemetry shows attom_closed_sales_count and attom_import_added.
+* e2e/attom_dedupe.spec.ts passes locally (or skips when ATTOM_API_KEY missing).
+
+8) How to verify quickly (manual)
+# 1) Import
+curl -sS -X POST http://localhost:3000/api/attom/import/closed-sales | jq
+
+# 2) Count
+jq length data/attom/closed_sales/FL_Seminole.json
+
+# 3) Re-import
+curl -sS -X POST http://localhost:3000/api/attom/import/closed-sales | jq
+
+# 4) Count again (should match #2)
+jq length data/attom/closed_sales/FL_Seminole.json
+Done. Ship the patch exactly as above. No other features touched.
