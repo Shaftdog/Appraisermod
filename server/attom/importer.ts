@@ -163,8 +163,14 @@ export async function importParcels(county: string) {
 
 export async function importSubjectByAddress(addressLine1: string, city: string, state='FL', zip?: string) {
   const key = process.env.ATTOM_API_KEY!;
+  // Combine city, state, and zip into address2 parameter as required by ATTOM API
+  const address2Parts = [city, state];
+  if (zip) address2Parts.push(zip);
+  const address2 = address2Parts.join(', ');
+  
   const data = await attomGet('/propertyapi/v1.0.0/property/detail', key, {
-    address1: addressLine1, city, state, postalcode: zip
+    address1: addressLine1, 
+    address2: address2
   });
   const p = Array.isArray(data?.property) ? data.property[0] : data?.property;
   if (!p) return null;
