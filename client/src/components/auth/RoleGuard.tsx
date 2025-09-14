@@ -1,5 +1,21 @@
-import { useRoleGuard } from "@/hooks/useAuth";
+import { useAuth } from "@/lib/auth";
 import { ReactNode } from "react";
+
+function useRoleGuard(requiredRole: 'admin' | 'reviewer' | 'appraiser') {
+  const { user, loading } = useAuth();
+  
+  const hasAccess = user && (
+    requiredRole === 'admin' && user.role === 'admin' ||
+    requiredRole === 'reviewer' && (user.role === 'reviewer' || user.role === 'admin') ||
+    requiredRole === 'appraiser' && user.role === 'appraiser'
+  );
+
+  return {
+    hasAccess: !!hasAccess,
+    isLoading: loading,
+    user
+  };
+}
 
 interface RoleGuardProps {
   role: 'admin' | 'reviewer' | 'appraiser';

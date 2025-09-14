@@ -1,0 +1,10 @@
+{
+  "orderId": "order-123",
+  "status": "open",
+  "overallRisk": "green",
+  "createdAt": "2025-09-14T02:25:17.517Z",
+  "updatedAt": "2025-09-14T02:25:17.517Z",
+  "hits": [],
+  "overrides": [],
+  "comments": []
+}

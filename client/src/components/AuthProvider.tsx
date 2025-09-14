@@ -33,6 +33,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
+        credentials: "include",
       });
       if (!response.ok) {
         const error = await response.json();
@@ -51,6 +52,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(userData),
+        credentials: "include",
       });
       if (!response.ok) {
         const error = await response.json();
@@ -67,6 +69,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     mutationFn: async () => {
       const response = await fetch("/api/auth/logout", {
         method: "POST",
+        credentials: "include",
       });
       if (!response.ok) {
         const error = await response.json();

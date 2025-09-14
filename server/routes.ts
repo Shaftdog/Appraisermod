@@ -83,6 +83,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return true;
     }
     
+    // Reviewers can access all orders (for review workflow)
+    if (user.role === 'reviewer') {
+      return true;
+    }
+    
     // Check explicit order assignment using stable userId
     const assignedUsers = orderAssignments.get(orderId);
     if (assignedUsers && assignedUsers.has(user.id)) {
@@ -272,6 +277,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get review queue (MUST come before parameterized routes)
+  app.get("/api/review/queue", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const queue = await storage.getReviewQueue();
+      res.json(queue);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Get review item for an order
   app.get("/api/review/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
@@ -373,15 +388,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get review queue
-  app.get("/api/review/queue", requireAuth, async (req: AuthenticatedRequest, res) => {
-    try {
-      const queue = await storage.getReviewQueue();
-      res.json(queue);
-    } catch (error) {
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
 
   // Review sign-off (FIXED: Use server-side role enforcement)
   app.post("/api/review/:id/signoff", requireAuth, async (req: AuthenticatedRequest, res) => {
