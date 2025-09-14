@@ -135,6 +135,12 @@ export function OrderReview() {
   const criticalHits = reviewItem.hits.filter(hit => hit.risk === 'red');
   const warningHits = reviewItem.hits.filter(hit => hit.risk === 'yellow');
   const infoHits = reviewItem.hits.filter(hit => hit.risk === 'green');
+  
+  // Check if approval is blocked by unresolved red hits
+  const unresolvedCriticalHits = criticalHits.filter(hit => 
+    !reviewItem.overrides.some(override => override.ruleId === hit.ruleId)
+  );
+  const isApprovalBlocked = unresolvedCriticalHits.length > 0;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -422,11 +428,24 @@ export function OrderReview() {
                 Are you sure you want to approve this order? This action will mark the review as complete and approved.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {isApprovalBlocked && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-600" />
+                  <p className="text-sm text-red-800 dark:text-red-200 font-medium">
+                    Approval Blocked
+                  </p>
+                </div>
+                <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                  Approval requires no Red hits or documented overrides for remaining Red hits.
+                </p>
+              </div>
+            )}
             <AlertDialogFooter>
               <AlertDialogCancel data-testid="button-cancel-approve">Cancel</AlertDialogCancel>
               <AlertDialogAction 
                 onClick={handleApprove}
-                disabled={signoffMutation.isPending}
+                disabled={signoffMutation.isPending || isApprovalBlocked}
                 data-testid="button-confirm-approve"
               >
                 {signoffMutation.isPending ? "Approving..." : "Approve Order"}

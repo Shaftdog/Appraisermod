@@ -38,10 +38,18 @@ const commentSchema = z.object({
   parentId: z.string().optional()
 });
 
-const signoffSchema = z.object({
-  accept: z.boolean(),
-  reason: z.string().min(1).max(500).optional()
-});
+// Schema for backward compatibility - supports both new and legacy formats
+const signoffSchema = z.union([
+  // New format: { accept: boolean, reason?: string }
+  z.object({
+    accept: z.boolean(),
+    reason: z.string().min(1).max(500).optional()
+  }),
+  // Legacy format: { message: string } - transform to { accept: true, reason: message }
+  z.object({
+    message: z.string().min(1).max(500)
+  }).transform(data => ({ accept: true, reason: data.message }))
+]);
 import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, DEFAULT_ENGINE_SETTINGS, normalizeEngineWeights } from "@shared/adjustments";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
@@ -813,7 +821,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { candidateId, targetIndex, confirm } = validationResult.data;
 
       try {
-        const updatedSelection = await storage.swapComp(orderId, candidateId, targetIndex);
+        const updatedSelection = await storage.swapComp(orderId, candidateId, targetIndex as 0 | 1 | 2);
         res.json(updatedSelection);
       } catch (error) {
         if (error instanceof Error && error.message.includes('locked comp')) {

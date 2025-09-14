@@ -17,6 +17,7 @@ import {
   Clock
 } from "lucide-react";
 import { ReviewItem, RuleHit } from "../../../../types/review";
+import { SubmitRevisionsRequest } from "../../../../types/review-contract";
 
 interface ReviewerFeedbackBannerProps {
   orderId: string;
@@ -35,9 +36,11 @@ export function ReviewerFeedbackBanner({ orderId }: ReviewerFeedbackBannerProps)
   // Mutation for submitting revisions
   const revisionMutation = useMutation({
     mutationFn: async (message: string) => {
-      const res = await apiRequest("POST", `/api/review/${orderId}/signoff`, {
-        message: message.trim()
-      });
+      const payload: SubmitRevisionsRequest = { 
+        accept: true, 
+        reason: message.trim() || undefined 
+      };
+      const res = await apiRequest("POST", `/api/review/${orderId}/signoff`, payload);
       return res.json();
     },
     onSuccess: () => {
@@ -223,7 +226,7 @@ export function ReviewerFeedbackBanner({ orderId }: ReviewerFeedbackBannerProps)
               <DialogTrigger asChild>
                 <Button size="sm" data-testid="button-submit-revisions">
                   <Send className="h-4 w-4 mr-2" />
-                  Submit Revisions
+                  Submit Revisions to Reviewer
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -231,6 +234,11 @@ export function ReviewerFeedbackBanner({ orderId }: ReviewerFeedbackBannerProps)
                   <DialogTitle>Submit Revisions</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4">
+                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+                    <p className="text-sm text-amber-800 dark:text-amber-200">
+                      <strong>Important:</strong> Your revisions will be submitted to a reviewer and locked for further edits until returned.
+                    </p>
+                  </div>
                   <div>
                     <label className="text-sm font-medium mb-2 block">
                       Describe the changes you've made:

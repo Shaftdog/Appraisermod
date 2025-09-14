@@ -1,0 +1,161 @@
+
+PROJECT TITLE
+Hotfix: Reviewer Minor Issues — Align appraiser submission API contract, add global credentials for GET, and add a minimal E2E test.
+
+SCOPE RULES
+	•	No changes to secured Photo API.
+	•	Limit changes to review routes/UI, shared fetcher, and tests.
+
+⸻
+
+1) API Contract Alignment (appraiser “Submit Revisions”)
+
+Goal: Backend expects { accept: boolean, reason?: string }. Frontend is sending { message }.
+Fix:
+	1.	Create types/review-contract.ts:
+
+export interface SubmitRevisionsRequest {
+  accept: boolean;         // true = submit, false = withdraw/cancel
+  reason?: string;         // optional note
+}
+
+	2.	Update the frontend call site (Order Shell appraiser banner action) to send:
+
+const payload: SubmitRevisionsRequest = { accept: true, reason: userNote ?? undefined };
+await fetch(`/api/review/${orderId}/signoff`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+  credentials: 'include',
+});
+
+	3.	Make the route handler tolerant for legacy payloads (backward compatibility):
+
+	•	File: app/api/review/[orderId]/signoff/route.ts
+	•	Accept either { accept, reason } or legacy { message } and map legacy → { accept:true, reason:message }.
+	•	Validate types; on invalid shape return 400 with clear message.
+
+	4.	UI copy tweaks:
+
+	•	Change button label from “Submit Revisions” to “Submit Revisions to Reviewer”.
+	•	If backend returns 400 with contract error, show guidance: “Please update the app—this request requires { accept: boolean, reason?: string }.”
+
+⸻
+
+2) Global Credentials for GET (fetcher)
+
+Goal: Ensure cookies/sessions flow on all GETs.
+	1.	Create lib/http.ts and export a shared fetcher:
+
+export async function apiFetch(input: RequestInfo, init: RequestInit = {}) {
+  const res = await fetch(input, { credentials: 'include', ...init, headers: { ...(init.headers || {}) } });
+  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  return res;
+}
+export const jsonFetch = async <T>(url: string, init?: RequestInit): Promise<T> => {
+  const res = await apiFetch(url, init);
+  return res.json();
+};
+
+	2.	Wire it into SWR or your hooks:
+
+	•	Replace all plain fetch in usePhotos, useAddenda, usePhotosQc, useMarket, useReview, etc. with jsonFetch.
+
+	3.	Add a safe default for POST/PUT/DELETE:
+
+export const jsonWrite = async <T>(url: string, method: 'POST'|'PUT'|'DELETE', body?: any): Promise<T> => {
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+};
+
+
+⸻
+
+3) Minimal E2E Test (Playwright)
+
+Goal: Guard the reviewer loop and the aligned contract.
+	1.	Install:
+
+npm i -D @playwright/test
+npx playwright install
+
+	2.	Add e2e/reviewer.spec.ts:
+
+import { test, expect } from '@playwright/test';
+
+test('Reviewer loop + appraiser submit revisions', async ({ page }) => {
+  // Login as reviewer
+  await page.goto('/login');
+  await page.getByLabel('Email').fill('reviewer@example.com');
+  await page.getByLabel('Password').fill('P@ssw0rd!');
+  await page.getByRole('button', { name: /sign in/i }).click();
+  await expect(page).toHaveURL(/\/review$/);
+
+  // Open first order in queue
+  await page.getByRole('row', { name: /risk/i }).nth(1).click(); // second row = first order
+  await page.getByRole('button', { name: /run policy/i }).click();
+  await page.getByText(/hits/i).waitFor();
+
+  // Request changes (creates thread)
+  await page.getByRole('button', { name: /request change/i }).first().click();
+  await page.getByLabel(/comment/i).fill('Please align time-basis with market metric.');
+  await page.getByRole('button', { name: /send/i }).click();
+  await expect(page.getByText(/changes requested/i)).toBeVisible();
+
+  // Simulate appraiser session in same browser (or new context if you prefer)
+  await page.goto('/logout');
+  await page.goto('/login');
+  await page.getByLabel('Email').fill('appraiser@example.com');
+  await page.getByLabel('Password').fill('P@ssw0rd!');
+  await page.getByRole('button', { name: /sign in/i }).click();
+
+  // Open order shell and "Submit Revisions"
+  await page.goto('/orders/123'); // adjust sample order id
+  await page.getByRole('button', { name: /submit revisions/i }).click();
+  await page.getByLabel(/reason/i).fill('Aligned basis to salePrice; updated narrative.');
+  await page.getByRole('button', { name: /confirm/i }).click();
+  await expect(page.getByText(/revisions submitted/i)).toBeVisible();
+
+  // Reviewer approves
+  await page.goto('/logout');
+  await page.goto('/login');
+  await page.getByLabel('Email').fill('reviewer@example.com');
+  await page.getByLabel('Password').fill('P@ssw0rd!');
+  await page.getByRole('button', { name: /sign in/i }).click();
+  await page.goto('/review');
+  await page.getByRole('row', { name: /revisions submitted/i }).nth(0).click();
+  await page.getByRole('button', { name: /run policy/i }).click();
+  await page.getByRole('button', { name: /approve as reviewer/i }).click();
+  await expect(page.getByText(/approved/i)).toBeVisible();
+});
+
+	3.	Add a package script:
+
+"scripts": {
+  "test:e2e": "playwright test --reporter=list"
+}
+
+If your login path or button labels differ, update the selectors accordingly. If you use role flags via env, start the dev server with NEXT_PUBLIC_ROLE=reviewer when appropriate.
+
+⸻
+
+4) Quick UX polish (copy)
+	•	In Reviewer page footer, when approval is blocked, show:
+“Approval requires no Red hits or documented overrides for remaining Red hits.”
+	•	In Appraiser banner, clarify:
+“Your revisions will be submitted to a reviewer and locked for further edits until returned.”
+
+⸻
+
+ACCEPTANCE (checklist)
+	•	Submitting revisions now sends { accept:true, reason?:string }; legacy { message } is still tolerated by the route with a deprecation warning in the response text (optional).
+	•	All GET/POST/PUT/DELETE calls carry credentials:'include' via the shared fetcher; no more “unauthorized” blips on GET.
+	•	npm run test:e2e runs the Playwright test and passes locally (or at least reaches the approval step).
+	•	Reviewer approve button state correctly reflects Red/override rules; copy is clear.
+	•	All changes are localized; no regressions in Photos/MCR/Adjustments flows.
+
+⸻
