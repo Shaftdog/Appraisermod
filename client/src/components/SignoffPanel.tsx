@@ -35,6 +35,18 @@ export function SignoffPanel({ signoff, status, openIssues, onSignoff, className
     });
   };
 
+  // Add safety check for undefined signoff
+  if (!signoff) {
+    return (
+      <div className={cn("bg-card border border-border rounded-lg p-6", className)}>
+        <h3 className="font-medium text-foreground mb-4">Sign-off Status</h3>
+        <div className="space-y-3">
+          <p className="text-muted-foreground">Sign-off data not available</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("bg-card border border-border rounded-lg p-6", className)}>
       <h3 className="font-medium text-foreground mb-4">Sign-off Status</h3>
