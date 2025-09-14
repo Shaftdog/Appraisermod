@@ -27,20 +27,37 @@ export interface WorkfileBundleMeta {
 }
 
 export interface DeliveryRequest {
-  clientProfileId: string;
-  includeWorkfile: boolean;
-  includeMismo: boolean;
-  finalize: boolean;     // mark delivered in ledger
+  orderId: string;
+  clientId: string;
+  formats: string[];
+  deliveryMethod: 'download' | 'email' | 'ftp';
+  // Legacy fields for backward compatibility
+  clientProfileId?: string;
+  includeWorkfile?: boolean;
+  includeMismo?: boolean;
+  finalize?: boolean;
+}
+
+export interface PackageItem {
+  filename: string;
+  type: string;
+  size: number;
+  path: string;
 }
 
 export interface DeliveryRecord {
+  id: string;
   orderId: string;
   request: DeliveryRequest;
   mismo?: MismoExportMeta;
   workfile?: WorkfileBundleMeta;
   deliveredAt?: string;
-  status: 'success'|'warning'|'failed';
+  requestedAt: string;
+  completedAt?: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'success' | 'warning';
   messages: string[];
+  formats: string[];
+  packageItems: PackageItem[];
 }
 
 // Type aliases for backward compatibility
