@@ -1,4 +1,5 @@
 import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
+import { type HabuState, type HabuInputs, type HabuResult, type ZoningData } from "@shared/habu";
 import { type ReviewItem, type RuleHit, type ReviewQueueItem, type Thread, type Comment, type DiffSummary, type Risk } from "../../types/review";
 import { type PolicyPack } from "../../types/policy";
 import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, type CompAdjustmentLine, type AttrAdjustment, type CostBaseline, type DepreciationCurve, DEFAULT_ENGINE_SETTINGS, ATTR_METADATA } from "@shared/adjustments";
@@ -15,6 +16,7 @@ import { computeMarketMetrics } from "@shared/marketStats";
 import { format, subMonths, addMonths } from "date-fns";
 import { type ClosedSale } from "@shared/attom";
 import { calculateTimeAdjustment } from "@shared/timeAdjust";
+import { computeUseEvaluation, scoreMaxProductive, generateNarrative, createDefaultWeights, normalizeWeights, USE_CATEGORY_LABELS } from "@shared/habu";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -99,6 +101,13 @@ export interface IStorage {
   getReviewQueue(): Promise<ReviewQueueItem[]>;
   reviewSignoff(orderId: string, role: 'reviewer' | 'appraiser', accept: boolean, reason?: string, userId?: string): Promise<{ success: boolean }>;
   getVersionDiff(orderId: string, fromVersionId: string, toVersionId: string): Promise<DiffSummary>;
+
+  // HABU (Highest & Best Use) methods
+  getHabuState(orderId: string): Promise<HabuState | null>;
+  saveHabuInputs(orderId: string, inputs: HabuInputs): Promise<HabuState>;
+  computeHabu(orderId: string): Promise<HabuResult>;
+  updateHabuNotes(orderId: string, notes: { reviewerNotes?: string; appraiserNotes?: string }): Promise<HabuState>;
+  fetchZoningStub(orderId: string): Promise<ZoningData>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2178,6 +2187,161 @@ export class DatabaseStorage implements IStorage {
       selectedModel: 'salePrice',
       primaryWeights: [0.6, 0.3, 0.1] // Default weights for primary comps
     };
+  }
+
+  // HABU (Highest & Best Use) implementation
+  private habuStatePath(orderId: string): string {
+    return path.join(process.cwd(), 'data', 'orders', orderId, 'habu', 'state.json');
+  }
+
+  private async readHabuStateFile(orderId: string): Promise<HabuState | null> {
+    try {
+      const filePath = this.habuStatePath(orderId);
+      const content = await fsPromises.readFile(filePath, 'utf8');
+      return JSON.parse(content);
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeHabuStateFile(orderId: string, state: HabuState): Promise<void> {
+    const filePath = this.habuStatePath(orderId);
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+    await fsPromises.writeFile(filePath, JSON.stringify(state, null, 2), 'utf8');
+  }
+
+  async getHabuState(orderId: string): Promise<HabuState | null> {
+    return await this.readHabuStateFile(orderId);
+  }
+
+  async saveHabuInputs(orderId: string, inputs: HabuInputs): Promise<HabuState> {
+    let state = await this.readHabuStateFile(orderId);
+    
+    if (!state) {
+      state = {
+        orderId,
+        inputs,
+        updatedAt: new Date().toISOString()
+      };
+    } else {
+      state.inputs = inputs;
+      state.updatedAt = new Date().toISOString();
+    }
+
+    await this.writeHabuStateFile(orderId, state);
+    return state;
+  }
+
+  async computeHabu(orderId: string): Promise<HabuResult> {
+    const state = await this.readHabuStateFile(orderId);
+    if (!state || !state.inputs) {
+      throw new Error('HABU inputs not found - please save inputs first');
+    }
+
+    const inputs = state.inputs;
+    const weights = createDefaultWeights();
+    const normalizedWeights = normalizeWeights(weights);
+
+    // Compute evaluation for each candidate use
+    let evaluations = inputs.candidateUses.map(use => 
+      computeUseEvaluation(inputs, use, normalizedWeights)
+    );
+
+    // Apply max productive scoring based on ranking
+    evaluations = scoreMaxProductive(evaluations);
+
+    // Sort by composite score descending
+    const rankedUses = evaluations.sort((a, b) => b.composite - a.composite);
+
+    // Determine conclusions
+    const topUse = rankedUses[0];
+    const confidence = rankedUses.length > 1 
+      ? Math.min(0.95, 0.5 + (topUse.composite - rankedUses[1].composite))
+      : 0.8;
+
+    const asIfVacantConclusion = {
+      use: topUse.use,
+      composite: topUse.composite,
+      confidence,
+      narrative: ''
+    };
+
+    let asImprovedConclusion;
+    if (!inputs.asIfVacant) {
+      // For as-improved, consider existing use if it's a candidate
+      const existingUse = 'singleFamily'; // Would derive from order/subject data
+      const existingEval = rankedUses.find(e => e.use === existingUse);
+      
+      if (existingEval) {
+        asImprovedConclusion = {
+          use: existingEval.use,
+          composite: existingEval.composite,
+          confidence: Math.min(confidence, 0.9),
+          narrative: ''
+        };
+      }
+    }
+
+    const result: HabuResult = {
+      asIfVacantConclusion,
+      asImprovedConclusion,
+      rankedUses,
+      weights: normalizedWeights,
+      version: '2025.09.1',
+      generatedAt: new Date().toISOString(),
+      author: 'system' // Would use actual user context
+    };
+
+    // Update state with result
+    state.result = result;
+    state.updatedAt = new Date().toISOString();
+
+    // Generate narrative
+    const narrative = generateNarrative(state);
+    result.asIfVacantConclusion.narrative = narrative;
+    if (result.asImprovedConclusion) {
+      result.asImprovedConclusion.narrative = narrative;
+    }
+
+    await this.writeHabuStateFile(orderId, state);
+    return result;
+  }
+
+  async updateHabuNotes(orderId: string, notes: { reviewerNotes?: string; appraiserNotes?: string }): Promise<HabuState> {
+    let state = await this.readHabuStateFile(orderId);
+    if (!state) {
+      throw new Error('HABU state not found');
+    }
+
+    if (notes.reviewerNotes !== undefined) {
+      state.reviewerNotes = notes.reviewerNotes;
+    }
+    if (notes.appraiserNotes !== undefined) {
+      state.appraiserNotes = notes.appraiserNotes;
+    }
+
+    state.updatedAt = new Date().toISOString();
+    await this.writeHabuStateFile(orderId, state);
+    return state;
+  }
+
+  async fetchZoningStub(orderId: string): Promise<ZoningData> {
+    // Stub implementation - in future would integrate with ATTOM or county GIS
+    const mockZoning: ZoningData = {
+      source: 'provider',
+      code: 'R-1',
+      description: 'Single Family Residential',
+      allowedUses: ['singleFamily', 'vacantResidential'],
+      minLotSizeSqft: 6000,
+      maxDensityDUA: 7.3,
+      maxHeightFt: 35,
+      setbacks: { front: 25, side: 7, rear: 20 },
+      notes: 'Single family residential zoning with detached accessory dwelling units permitted',
+      fetchedAt: new Date().toISOString(),
+      providerRef: 'stub:R-1'
+    };
+
+    return mockZoning;
   }
 }
 
