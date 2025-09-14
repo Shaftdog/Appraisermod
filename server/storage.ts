@@ -117,6 +117,9 @@ export class DatabaseStorage implements IStorage {
 
   private async initializeWithSampleData() {
     try {
+      // Initialize test users first
+      await this.initializeTestUsers();
+      
       // Check if we already have sample data
       const existingOrders = await db.select().from(orders).limit(1);
       if (existingOrders.length > 0) {
@@ -162,6 +165,46 @@ export class DatabaseStorage implements IStorage {
       }
     } catch (error) {
       console.log('No sample data found or error loading:', error);
+    }
+  }
+
+  private async initializeTestUsers() {
+    try {
+      // Check if test users already exist
+      const existingUsers = await db.select().from(users).limit(1);
+      if (existingUsers.length > 0) {
+        return; // Users already exist
+      }
+
+      // Create test users
+      const testUsers = [
+        {
+          username: 'Rod',
+          password: 'password',
+          email: 'rod@example.com',
+          fullName: 'Rod Haugabrooks',
+          role: 'appraiser' as const
+        },
+        {
+          username: 'Sarah',
+          password: 'password',
+          email: 'sarah@example.com',
+          fullName: 'Sarah Chen',
+          role: 'reviewer' as const
+        }
+      ];
+
+      for (const userData of testUsers) {
+        const hashedPassword = await bcrypt.hash(userData.password, 12);
+        await db.insert(users).values({
+          ...userData,
+          password: hashedPassword,
+        });
+      }
+
+      console.log('Test users initialized');
+    } catch (error) {
+      console.log('Error initializing test users:', error);
     }
   }
 
@@ -217,16 +260,22 @@ export class DatabaseStorage implements IStorage {
   async authenticateUser(username: string, password: string): Promise<User | null> {
     // Get user with password for verification
     const [userWithPassword] = await db.select().from(users).where(eq(users.username, username));
+    console.log(`[AUTH] Looking for user: ${username}`);
     if (!userWithPassword) {
+      console.log(`[AUTH] User not found: ${username}`);
       return null;
     }
+    console.log(`[AUTH] Found user: ${userWithPassword.username}, email: ${userWithPassword.email}`);
 
     // Verify password
     const passwordMatch = await bcrypt.compare(password, userWithPassword.password);
+    console.log(`[AUTH] Password match for ${username}: ${passwordMatch}`);
     if (!passwordMatch) {
+      console.log(`[AUTH] Password verification failed for ${username}`);
       return null;
     }
 
+    console.log(`[AUTH] Authentication successful for ${username}`);
     // Return user without password
     return {
       id: userWithPassword.id,

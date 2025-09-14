@@ -281,9 +281,29 @@
       "qc": {
         "status": "red",
         "openIssues": 1,
-        "overriddenIssues": 0
+        "overriddenIssues": 0,
+        "lastReviewedBy": "Sarah Chen",
+        "lastReviewedAt": "2024-03-10T13:15:00Z"
       },
-      "signoff": "pending"
+      "signoff": {
+        "state": "unsigned"
+      },
+      "versions": [
+        {
+          "id": "v1-habu",
+          "label": "v1 • 2024-03-10 13:15",
+          "author": "Sarah Chen",
+          "createdAt": "2024-03-10T13:15:00Z",
+          "data": {
+            "analysisCompleted": false,
+            "fourTestsStatus": "pending"
+          }
+        }
+      ],
+      "currentData": {
+        "analysisCompleted": false,
+        "fourTestsStatus": "pending"
+      }
     },
     "reconciliation": {
       "key": "reconciliation",

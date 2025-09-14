@@ -1104,11 +1104,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Store user in session (using express-session)
+      console.log(`[LOGIN] Setting session for user ${user.username} (${user.id})`);
+      console.log(`[LOGIN] Session ID before: ${req.session.id}`);
       req.session.userId = user.id;
       req.session.save((err) => {
         if (err) {
+          console.log(`[LOGIN] Session save error:`, err);
           return res.status(500).json({ message: "Session error" });
         }
+        console.log(`[LOGIN] Session saved successfully. Session ID: ${req.session.id}, UserId: ${req.session.userId}`);
         res.json({ 
           user: {
             id: user.id,
@@ -1137,7 +1141,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get current user from session
   app.get("/api/auth/me", async (req, res) => {
     try {
+      console.log(`[AUTH_ME] Session ID: ${req.session.id}, UserId: ${req.session.userId}`);
+      console.log(`[AUTH_ME] Session object:`, JSON.stringify(req.session, null, 2));
       if (!req.session.userId) {
+        console.log(`[AUTH_ME] No userId in session, returning 401`);
         return res.status(401).json({ message: "Not authenticated" });
       }
 
