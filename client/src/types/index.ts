@@ -56,15 +56,15 @@ export interface Order {
 
 export const TAB_LABELS: Record<TabKey, string> = {
   orderSummary: 'Order Summary',
-  subject: 'Subject',
-  market: 'Market',
-  comps: 'Comps',
-  sketch: 'Sketch',
+  subject: 'Subject Property',
+  market: 'Market Analysis',
+  comps: 'Comparables',
+  sketch: 'Sketch & GLA',
   photos: 'Photos',
-  cost: 'Cost',
-  habu: 'HABU',
+  cost: 'Cost Approach',
+  habu: 'Highest & Best Use',
   reconciliation: 'Reconciliation',
-  activity: 'Activity',
+  activity: 'Activity Log',
   qcSignoff: 'QC & Sign-off',
-  exports: 'Exports'
+  exports: 'Delivery & Exports'
 };
