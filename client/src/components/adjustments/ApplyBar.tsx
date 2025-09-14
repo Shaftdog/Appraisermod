@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { audit } from "../../../lib/audit";
 import { type AdjustmentRunInput, type AdjustmentRunResult, type AdjustmentsBundle, type EngineSettings } from "@shared/adjustments";
 
 interface ApplyBarProps {
@@ -90,6 +91,20 @@ export function ApplyBar({
       return response.json();
     },
     onSuccess: (bundle: AdjustmentsBundle) => {
+      // Audit logging for apply adjustments to comps
+      audit({
+        userId: 'current-user', // Will be populated by server with actual user
+        role: 'appraiser',
+        action: 'adjustments.apply',
+        orderId: orderId!,
+        path: 'adjustments.apply_to_comps',
+        after: { 
+          appliedCount: bundle.compLines.length,
+          engineUsed: lastRun?.engine || 'unknown',
+          marketBasis: marketBasis
+        }
+      });
+
       toast({
         title: "Adjustments Applied",
         description: `Applied adjustments to ${bundle.compLines.length} comparables.`

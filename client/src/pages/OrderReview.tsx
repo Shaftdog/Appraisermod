@@ -34,6 +34,8 @@ import {
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { audit } from "../../../lib/audit";
+import { telemetry } from "../../../lib/telemetry";
 import type { ReviewItem, RuleHit } from "../../../types/review";
 
 export function OrderReview() {
@@ -58,6 +60,21 @@ export function OrderReview() {
       return res.json();
     },
     onSuccess: (data, variables) => {
+      // Audit logging for reviewer actions
+      audit({
+        userId: 'current-user', // Will be populated by server with actual user
+        role: 'reviewer',
+        action: variables.accept ? 'signoff.reviewer.approve' : 'signoff.reviewer.request_changes',
+        orderId: orderId!,
+        path: 'review.signoff',
+        after: { action: variables.accept ? 'approved' : 'changes_requested', reason: variables.reason }
+      });
+
+      // Telemetry: Count review outcomes
+      if (!variables.accept && reviewItem?.overallRisk === 'red') {
+        telemetry.reviewRedHits(1, orderId);
+      }
+
       toast({
         title: variables.accept ? "Order Approved" : "Changes Requested",
         description: variables.accept

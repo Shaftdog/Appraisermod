@@ -42,6 +42,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { audit } from '../../../../lib/audit';
+import { telemetry } from '../../../../lib/telemetry';
 import type { DeliveryRequest, DeliveryClient, DeliveryPackage, PackageItem } from '../../../../types/delivery';
 
 // Form validation schema - matching server expectations

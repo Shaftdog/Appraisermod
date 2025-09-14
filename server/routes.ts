@@ -79,36 +79,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize with sample assignment for development
   orderAssignments.set('order-123', new Set(['40f965ba-4d70-41e6-ad21-dec093f9c96e']));
 
-  // Utility function to verify user authorization for an order
+  // SECURITY: Audit logging for authorization attempts
+  function logAuthorizationAttempt(user: any, orderId: string, granted: boolean, reason: string) {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      timestamp,
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+      orderId,
+      accessGranted: granted,
+      reason,
+      ip: 'unknown' // TODO: Add request IP when available
+    };
+    
+    // TODO: Write to proper audit log system or database
+    console.log('[AUTHORIZATION_AUDIT]', JSON.stringify(logEntry));
+  }
+
+  // SECURITY: Auto-assignment function for business rules-based access
+  function autoAssignUserToOrderByBusinessRules(user: any, orderId: string): boolean {
+    // Business Rule 1: Auto-assign users to orders based on naming convention
+    // For development: if order contains "demo" or "sample", auto-assign
+    if (orderId.includes('demo') || orderId.includes('sample') || orderId.includes('123')) {
+      assignUserToOrder(user.id, orderId);
+      return true;
+    }
+    
+    // Business Rule 2: Auto-assign based on user role and order pattern
+    // This is a temporary development rule - replace with proper assignment logic
+    if (user.role === 'appraiser' && orderId.startsWith('order-')) {
+      // For development only - auto-assign appraisers to orders starting with 'order-'
+      assignUserToOrder(user.id, orderId);
+      return true;
+    }
+    
+    if (user.role === 'reviewer' && orderId.startsWith('review-')) {
+      // For development only - auto-assign reviewers to orders starting with 'review-'
+      assignUserToOrder(user.id, orderId);
+      return true;
+    }
+    
+    return false;
+  }
+
+  // SECURITY FIX: Proper order-level authorization with least privilege
   async function verifyUserCanAccessOrder(user: any, orderId: string): Promise<boolean> {
     // Check that the order exists
     const order = await storage.getOrder(orderId);
     if (!order) {
+      logAuthorizationAttempt(user, orderId, false, 'Order does not exist');
       return false;
     }
     
-    // Admins can access all orders
+    // Admins retain full access for administrative purposes
     if (user.role === 'admin') {
+      logAuthorizationAttempt(user, orderId, true, 'Admin role granted full access');
       return true;
     }
     
-    // Appraisers can access all orders (for appraisal workflow)
-    if (user.role === 'appraiser') {
-      return true;
-    }
-    
-    // Reviewers can access all orders (for review workflow)
-    if (user.role === 'reviewer') {
-      return true;
-    }
-    
-    // Check explicit order assignment using stable userId
+    // SECURITY FIX: Check explicit order assignment first
     const assignedUsers = orderAssignments.get(orderId);
     if (assignedUsers && assignedUsers.has(user.id)) {
+      logAuthorizationAttempt(user, orderId, true, 'User explicitly assigned to order');
       return true;
     }
     
-    // DENY by default - no backdoors for unauthorized access
+    // SECURITY: Apply business rules for auto-assignment (development only)
+    // TODO: Remove this in production and implement proper assignment workflow
+    if (process.env.NODE_ENV !== 'production') {
+      const autoAssigned = autoAssignUserToOrderByBusinessRules(user, orderId);
+      if (autoAssigned) {
+        logAuthorizationAttempt(user, orderId, true, 'Auto-assigned via business rules (development only)');
+        return true;
+      }
+    }
+    
+    // SECURITY: DENY by default - no backdoors for unauthorized access
+    logAuthorizationAttempt(user, orderId, false, 'No explicit assignment or business rule match');
     return false;
   }
   

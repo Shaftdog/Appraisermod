@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { RiskChip } from "./RiskChip";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { audit } from "../../../../lib/audit";
 import { 
   AlertTriangle, 
   CheckCircle2, 
@@ -43,7 +44,17 @@ export function ReviewerFeedbackBanner({ orderId }: ReviewerFeedbackBannerProps)
       const res = await apiRequest("POST", `/api/review/${orderId}/signoff`, payload);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
+      // Audit logging for appraiser submit revisions
+      audit({
+        userId: 'current-user', // Will be populated by server with actual user
+        role: 'appraiser',
+        action: 'revisions.submit',
+        orderId: orderId!,
+        path: 'review.revisions',
+        after: { message: variables.trim() }
+      });
+
       toast({
         title: "Revisions Submitted",
         description: "Your revisions have been sent to the reviewer for re-evaluation.",
