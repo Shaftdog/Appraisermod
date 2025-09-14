@@ -16,10 +16,10 @@ import OrderLayout from './layout';
 export default function OrderPage() {
   const [location] = useLocation();
   const params = useParams<{ orderId: string }>();
-  
+
   const pathSegments = location.split('/');
   const currentTab = pathSegments[pathSegments.length - 1];
-  
+
   const renderTabContent = () => {
     switch (currentTab) {
       case 'subject':
