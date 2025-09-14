@@ -180,7 +180,7 @@ export class DatabaseStorage implements IStorage {
       const testUsers = [
         {
           username: 'Rod',
-          password: 'password',
+          password: 'pass123',
           email: 'rod@example.com',
           fullName: 'Rod Haugabrooks',
           role: 'appraiser' as const
