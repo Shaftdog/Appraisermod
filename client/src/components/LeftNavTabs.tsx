@@ -8,6 +8,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { UserProfile } from '@/components/UserProfile';
+import { HealthStatusBadge } from '@/components/HealthStatusBadge';
 
 interface LeftNavTabsProps {
   order: Order;
@@ -31,6 +32,7 @@ export function LeftNavTabs({ order }: LeftNavTabsProps) {
     'photos',
     'cost',
     'reconciliation',
+    'activity',
     'qcSignoff',
     'exports'
   ];
@@ -64,7 +66,10 @@ export function LeftNavTabs({ order }: LeftNavTabsProps) {
             <h1 className="text-lg font-semibold" data-testid="text-order-number">
               Order #{order.orderNumber}
             </h1>
-            <UserProfile />
+            <div className="flex items-center gap-2">
+              <HealthStatusBadge />
+              <UserProfile />
+            </div>
           </div>
         </header>
 
@@ -154,10 +159,13 @@ function SidebarContent({
         )}
       </div>
       
-      {/* User Profile - Only show on desktop sidebar */}
+      {/* User Profile and Health Status - Only show on desktop sidebar */}
       {!showCloseButton && (
         <div className="mb-6">
-          <UserProfile />
+          <div className="flex items-center justify-between">
+            <UserProfile />
+            <HealthStatusBadge />
+          </div>
         </div>
       )}
       

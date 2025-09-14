@@ -8,6 +8,8 @@ import { Toolbar } from '@/components/Toolbar';
 import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
+import { audit } from '../../../../../lib/audit';
+import { telemetry } from '../../../../../lib/telemetry';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -140,6 +142,28 @@ export default function Market() {
       return response.json();
     },
     onSuccess: () => {
+      // Audit logging for time adjustment save
+      audit({
+        userId: 'current-user', // Will be populated by server with actual user
+        role: 'appraiser',
+        action: 'market.time_adjustment_save',
+        orderId: orderId!,
+        path: 'market.save_time_adjustments',
+        after: { 
+          pctPerMonth: mcrMetrics?.trendPctPerMonth || 0,
+          basis: currentSettings.metric || marketSettings?.metric || 'salePrice',
+          trendMethod: mcrMetrics?.trendMethod || 'unknown',
+          effectiveDate: currentSettings.effectiveDateISO || marketSettings?.effectiveDateISO || order?.dueDate
+        }
+      });
+
+      // Telemetry for time adjustment
+      telemetry.timeAdjustment(
+        Math.abs((mcrMetrics?.trendPctPerMonth || 0) * 100), 
+        currentSettings.metric || marketSettings?.metric || 'salePrice',
+        orderId
+      );
+
       queryClient.invalidateQueries({ queryKey: ['/api/orders', orderId, 'market', 'time-adjustments'] });
       toast({
         title: "Time adjustment saved",

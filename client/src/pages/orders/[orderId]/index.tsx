@@ -7,6 +7,7 @@ import Sketch from './sketch';
 import Photos from './photos';
 import Cost from './cost';
 import Reconciliation from './reconciliation';
+import Activity from './activity';
 import QcSignoff from './qc-signoff';
 import Exports from './exports';
 import OrderLayout from './layout';
@@ -34,6 +35,8 @@ export default function OrderPage() {
         return <Cost />;
       case 'reconciliation':
         return <Reconciliation />;
+      case 'activity':
+        return <Activity />;
       case 'qc-signoff':
         return <QcSignoff />;
       case 'exports':

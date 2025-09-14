@@ -122,6 +122,25 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
       return await response.json();
     },
     onSuccess: (data: DeliveryPackage) => {
+      // Audit logging for delivery request
+      audit({
+        userId: 'current-user', // Will be populated by server with actual user
+        role: 'appraiser',
+        action: 'delivery.request',
+        orderId: orderId!,
+        path: 'delivery.request_package',
+        after: { 
+          packageId: data.id,
+          clientId: data.clientId,
+          formatCount: data.formats.length,
+          totalSize: data.totalSize,
+          itemCount: data.items.length
+        }
+      });
+
+      // Telemetry for delivery package size
+      telemetry.deliverySize(data.totalSize);
+
       setRequestStatus('success');
       setDeliveryPackage(data);
       toast({

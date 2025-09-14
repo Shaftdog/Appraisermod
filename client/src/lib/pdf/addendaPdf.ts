@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import { DEFAULT_PDF_OPTIONS, PdfExportOptions } from '@/config/pdf';
 import { PhotoAddenda, AddendaPage, PhotoMeta, AddendaLayout } from '@/types/photos';
 import { DEV_AUTH } from '@/config/auth';
+import { telemetry } from '../../../../lib/telemetry';
 import { 
   getPageRect, 
   getContentRect, 
@@ -35,6 +36,7 @@ export interface GenerateResult {
  * Generate PDF from addenda layout
  */
 export async function generateAddendaPdf(input: GenerateAddendaInput): Promise<GenerateResult> {
+  const startTime = performance.now();
   const options = { ...DEFAULT_PDF_OPTIONS, ...input.options };
   const { orderId, addenda, photosById, meta } = input;
   
@@ -121,6 +123,11 @@ export async function generateAddendaPdf(input: GenerateAddendaInput): Promise<G
   // Generate PDF bytes
   const pdfBytes = await pdfDoc.save();
   const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  
+  // Telemetry tracking for PDF export
+  const exportTime = performance.now() - startTime;
+  telemetry.exportTime(exportTime, orderId);
+  telemetry.pdfPages(addenda.pages.length, orderId);
   
   return {
     blob,
