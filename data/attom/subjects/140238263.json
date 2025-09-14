@@ -1,0 +1,20 @@
+{
+  "attomId": 140238263,
+  "apn": "40151.1045-7",
+  "address": {
+    "line1": "4907 18TH AVE W",
+    "zip": "34209"
+  },
+  "location": {
+    "lat": "27.483621",
+    "lon": "-82.610414"
+  },
+  "char": {
+    "sqft": 1967,
+    "lotSizeSqft": 0.3774105,
+    "beds": 2,
+    "baths": 2
+  },
+  "assessment": {},
+  "lastSale": {}
+}
