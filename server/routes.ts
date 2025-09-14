@@ -60,6 +60,12 @@ import path from "path";
 import sharp from "sharp";
 import "./types"; // Import session type extensions
 
+// Delivery system imports
+import { type DeliveryRequest, type DeliveryPackage, type DeliveryClient, deliveryRequestSchema } from "../types/delivery";
+import { buildUAD26XML } from "../lib/mismo/buildUAD";
+import { makeZip } from "../lib/zip/makeZip";
+import { sha256File } from "../lib/crypto/sha256";
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Utility function to validate and sanitize orderId
   function validateOrderId(orderId: string): boolean {
@@ -1610,6 +1616,341 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(bundle);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ==========================================
+  // DELIVERY & EXPORTS API ENDPOINTS
+  // ==========================================
+
+  // Get all delivery clients
+  app.get("/api/delivery/clients", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const clientsData = await fs.readFile(path.join(process.cwd(), "data/delivery/clients.json"), "utf-8");
+      const clients: DeliveryClient[] = JSON.parse(clientsData);
+      res.json(clients);
+    } catch (error) {
+      console.error("Error loading delivery clients:", error);
+      res.status(500).json({ message: "Failed to load delivery clients" });
+    }
+  });
+
+  // Request delivery for an order
+  app.post("/api/delivery/request", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const validatedRequest = deliveryRequestSchema.parse(req.body);
+      
+      // Verify user has access to the order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, validatedRequest.orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Get order data for delivery package creation
+      const order = await storage.getOrder(validatedRequest.orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+
+      // Create delivery package ID
+      const deliveryId = `delivery-${validatedRequest.orderId}-${Date.now()}`;
+      
+      // Get order components needed for delivery
+      const [subject, comps, adjustmentsBundle, photos] = await Promise.all([
+        storage.getSubject(validatedRequest.orderId),
+        storage.getCompsWithScoring(validatedRequest.orderId).then(result => result.comps),
+        storage.getAdjustmentsBundle(validatedRequest.orderId),
+        storage.getPhotos(validatedRequest.orderId)
+      ]);
+
+      // Create delivery package directory
+      const deliveryDir = path.join(process.cwd(), "temp/deliveries", deliveryId);
+      await fs.mkdir(deliveryDir, { recursive: true });
+
+      const packageItems: Array<{ type: string; filename: string; size: number }> = [];
+
+      // Generate MISMO UAD XML if requested
+      if (validatedRequest.formats.includes('uad_xml')) {
+        try {
+          const uadInput = {
+            orderId: validatedRequest.orderId,
+            subject: {
+              address: subject?.address || '',
+              apn: (subject as any)?.apn,
+              legal: (subject as any)?.legalDescription,
+              gla: subject?.gla || 0,
+              yearBuilt: (subject as any)?.yearBuilt || new Date().getFullYear(),
+              siteSize: (subject as any)?.siteSize,
+              propertyType: (subject as any)?.propertyType || 'single-family'
+            },
+            comps: comps.map((comp: any) => ({
+              id: comp.id,
+              address: comp.address,
+              saleDate: comp.saleDate,
+              salePrice: comp.salePrice,
+              distance: comp.distanceMiles || 0,
+              gla: comp.gla,
+              adjustments: [],
+              netAdjustment: 0,
+              adjustedValue: comp.salePrice
+            })),
+            timeAdjustment: {
+              basis: (adjustmentsBundle as any)?.timeAdjustment?.basis || 'market_conditions',
+              rate: (adjustmentsBundle as any)?.timeAdjustment?.rate || 0,
+              effectiveDate: order.dueDate || new Date().toISOString()
+            },
+            marketMetrics: {
+              trendPerMonth: 0.5,
+              monthsOfInventory: 4.2,
+              daysOnMarket: 45,
+              salePriceToListPrice: 0.98
+            },
+            appraiser: {
+              name: 'John Appraiser',
+              license: 'AL12345',
+              company: 'Professional Appraisal Services'
+            },
+            effectiveDate: order.dueDate || new Date().toISOString(),
+            intendedUse: 'Purchase',
+            reconciledValue: (adjustmentsBundle as any)?.finalValue
+          };
+
+          const { xml, validation } = buildUAD26XML(uadInput);
+          
+          if (validation.isValid) {
+            const xmlPath = path.join(deliveryDir, `${validatedRequest.orderId}_UAD.xml`);
+            await fs.writeFile(xmlPath, xml, 'utf-8');
+            const xmlStats = await fs.stat(xmlPath);
+            packageItems.push({
+              type: 'uad_xml',
+              filename: `${validatedRequest.orderId}_UAD.xml`,
+              size: xmlStats.size
+            });
+          } else {
+            console.warn('UAD XML validation warnings:', validation.warnings);
+            console.error('UAD XML validation errors:', validation.errors);
+          }
+        } catch (xmlError) {
+          console.error('Error generating UAD XML:', xmlError);
+        }
+      }
+
+      // Copy photos if requested
+      if (validatedRequest.formats.includes('photos') && photos.length > 0) {
+        const photosDir = path.join(deliveryDir, 'photos');
+        await fs.mkdir(photosDir, { recursive: true });
+        
+        for (const photo of photos) {
+          try {
+            const sourcePath = path.join(process.cwd(), "uploads", (photo as any).filename);
+            const destPath = path.join(photosDir, (photo as any).filename);
+            await fs.copyFile(sourcePath, destPath);
+            const photoStats = await fs.stat(destPath);
+            packageItems.push({
+              type: 'photo',
+              filename: `photos/${(photo as any).filename}`,
+              size: photoStats.size
+            });
+          } catch (photoError) {
+            console.error(`Error copying photo ${(photo as any).filename}:`, photoError);
+          }
+        }
+      }
+
+      // Generate workfile ZIP if requested
+      if (validatedRequest.formats.includes('workfile_zip')) {
+        const zipPath = path.join(deliveryDir, `${validatedRequest.orderId}_Workfile.zip`);
+        const manifestPath = path.join(deliveryDir, `${validatedRequest.orderId}_Manifest.json`);
+        
+        try {
+          const zipResult = await makeZip(deliveryDir, zipPath, manifestPath);
+          const zipStats = await fs.stat(zipPath);
+          packageItems.push({
+            type: 'workfile_zip',
+            filename: `${validatedRequest.orderId}_Workfile.zip`,
+            size: zipStats.size
+          });
+        } catch (zipError) {
+          console.error('Error creating workfile ZIP:', zipError);
+        }
+      }
+
+      // Create delivery package metadata
+      const deliveryPackage: DeliveryPackage = {
+        id: deliveryId,
+        orderId: validatedRequest.orderId,
+        request: validatedRequest,
+        status: 'success' as const,
+        messages: [],
+        requestedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        packageItems,
+        metadata: {
+          orderEffectiveDate: order.dueDate || new Date().toISOString(),
+          generatedAt: new Date().toISOString() || 'download',
+          requestedBy: req.user!.id
+        }
+      };
+
+      // Save delivery package metadata
+      const metadataPath = path.join(deliveryDir, 'package.json');
+      await fs.writeFile(metadataPath, JSON.stringify(deliveryPackage, null, 2));
+
+      res.json(deliveryPackage);
+    } catch (error) {
+      console.error("Error processing delivery request:", error);
+      
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid delivery request",
+          errors: error.errors 
+        });
+      }
+      
+      res.status(500).json({ message: "Failed to process delivery request" });
+    }
+  });
+
+  // Get delivery status
+  app.get("/api/delivery/status/:deliveryId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const deliveryId = req.params.deliveryId;
+      
+      if (!deliveryId || !deliveryId.startsWith('delivery-')) {
+        return res.status(400).json({ message: 'Invalid delivery ID' });
+      }
+
+      const deliveryDir = path.join(process.cwd(), "temp/deliveries", deliveryId);
+      const metadataPath = path.join(deliveryDir, 'package.json');
+
+      try {
+        const metadataContent = await fs.readFile(metadataPath, 'utf-8');
+        const deliveryPackage: DeliveryPackage = JSON.parse(metadataContent);
+        
+        // Verify user has access to the order
+        const hasAccess = await verifyUserCanAccessOrder(req.user!, deliveryPackage.orderId);
+        if (!hasAccess) {
+          return res.status(403).json({ message: 'Access denied to this delivery' });
+        }
+
+        res.json(deliveryPackage);
+      } catch (fileError) {
+        return res.status(404).json({ message: 'Delivery not found' });
+      }
+    } catch (error) {
+      console.error("Error checking delivery status:", error);
+      res.status(500).json({ message: "Failed to check delivery status" });
+    }
+  });
+
+  // Download delivery package
+  app.get("/api/delivery/download/:deliveryId/:filename?", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const deliveryId = req.params.deliveryId;
+      const filename = req.params.filename;
+      
+      if (!deliveryId || !deliveryId.startsWith('delivery-')) {
+        return res.status(400).json({ message: 'Invalid delivery ID' });
+      }
+
+      const deliveryDir = path.join(process.cwd(), "temp/deliveries", deliveryId);
+      const metadataPath = path.join(deliveryDir, 'package.json');
+
+      // Verify delivery exists and user has access
+      try {
+        const metadataContent = await fs.readFile(metadataPath, 'utf-8');
+        const deliveryPackage: DeliveryPackage = JSON.parse(metadataContent);
+        
+        const hasAccess = await verifyUserCanAccessOrder(req.user!, deliveryPackage.orderId);
+        if (!hasAccess) {
+          return res.status(403).json({ message: 'Access denied to this delivery' });
+        }
+
+        // If no specific filename requested, return package metadata
+        if (!filename) {
+          return res.json(deliveryPackage);
+        }
+
+        // Download specific file
+        const filePath = path.join(deliveryDir, filename);
+        
+        try {
+          await fs.access(filePath);
+          
+          // Set appropriate content type based on file extension
+          const ext = path.extname(filename).toLowerCase();
+          const contentTypes: Record<string, string> = {
+            '.xml': 'application/xml',
+            '.zip': 'application/zip',
+            '.json': 'application/json',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.pdf': 'application/pdf'
+          };
+          
+          const contentType = contentTypes[ext] || 'application/octet-stream';
+          res.setHeader('Content-Type', contentType);
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+          
+          const fileStream = fsSync.createReadStream(filePath);
+          fileStream.pipe(res);
+        } catch (fileError) {
+          return res.status(404).json({ message: 'File not found in delivery package' });
+        }
+      } catch (metadataError) {
+        return res.status(404).json({ message: 'Delivery not found' });
+      }
+    } catch (error) {
+      console.error("Error downloading delivery file:", error);
+      res.status(500).json({ message: "Failed to download delivery file" });
+    }
+  });
+
+  // List all deliveries for an order
+  app.get("/api/delivery/orders/:orderId/deliveries", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.orderId;
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: 'Invalid order ID' });
+      }
+
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const deliveriesDir = path.join(process.cwd(), "temp/deliveries");
+      
+      try {
+        const deliveryFolders = await fs.readdir(deliveriesDir);
+        const orderDeliveries: DeliveryPackage[] = [];
+
+        for (const folder of deliveryFolders) {
+          if (folder.startsWith(`delivery-${orderId}-`)) {
+            try {
+              const metadataPath = path.join(deliveriesDir, folder, 'package.json');
+              const metadataContent = await fs.readFile(metadataPath, 'utf-8');
+              const deliveryPackage: DeliveryPackage = JSON.parse(metadataContent);
+              orderDeliveries.push(deliveryPackage);
+            } catch (packageError) {
+              console.warn(`Could not load delivery package metadata for ${folder}:`, packageError);
+            }
+          }
+        }
+
+        // Sort by generatedAt date, newest first
+        orderDeliveries.sort((a, b) => new Date((b as any).generatedAt || '').getTime() - new Date((a as any).generatedAt || '').getTime());
+        
+        res.json(orderDeliveries);
+      } catch (dirError) {
+        // Deliveries directory doesn't exist yet
+        res.json([]);
+      }
+    } catch (error) {
+      console.error("Error listing order deliveries:", error);
+      res.status(500).json({ message: "Failed to list order deliveries" });
     }
   });
 

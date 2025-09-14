@@ -42,3 +42,21 @@ export interface DeliveryRecord {
   status: 'success'|'warning'|'failed';
   messages: string[];
 }
+
+// Type aliases for backward compatibility
+export type DeliveryClient = ClientProfile;
+export type DeliveryPackage = DeliveryRecord;
+
+// Validation schemas
+import { z } from "zod";
+
+export const deliveryRequestSchema = z.object({
+  orderId: z.string().min(1),
+  clientProfileId: z.string().min(1),
+  includeWorkfile: z.boolean(),
+  includeMismo: z.boolean(),
+  finalize: z.boolean(),
+  formats: z.array(z.string()).optional().default(['uad_xml', 'workfile_zip'])
+});
+
+export type ValidatedDeliveryRequest = z.infer<typeof deliveryRequestSchema>;

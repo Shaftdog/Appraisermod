@@ -1,0 +1,14 @@
+{
+  "orderId": "order-123",
+  "monthsBack": 12,
+  "statuses": [
+    "sold",
+    "active",
+    "pending",
+    "expired"
+  ],
+  "usePolygon": true,
+  "metric": "salePrice",
+  "smoothing": "none",
+  "minSalesPerMonth": 5
+}

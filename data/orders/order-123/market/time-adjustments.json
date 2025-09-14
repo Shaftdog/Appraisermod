@@ -1,0 +1,7 @@
+{
+  "orderId": "order-123",
+  "basis": "salePrice",
+  "pctPerMonth": -0.0020288666036809566,
+  "effectiveDateISO": "2025-09-14",
+  "computedAt": "2025-09-14T11:50:08.781Z"
+}
