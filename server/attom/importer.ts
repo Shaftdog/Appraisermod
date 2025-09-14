@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { ATTOM } from '../../config/attom';
 import { attomGet } from './client';
 
@@ -34,6 +35,7 @@ export async function importClosedSales(county: string, monthsBack = ATTOM.month
   const normalized = sales.map((s: any) => {
     const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
     return {
+      id: randomUUID(), // Assign stable unique identifier
       apn: s?.identifier?.apn || s?.identifier?.apnOriginal,
       address,
       city: s?.address?.city,

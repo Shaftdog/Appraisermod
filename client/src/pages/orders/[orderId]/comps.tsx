@@ -11,6 +11,8 @@ import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import { TimeAdjustments } from '@shared/schema';
+import { AttomClosedSalesPicker } from '@/components/comps/AttomClosedSalesPicker';
+import type { ClosedSale } from '@shared/attom';
 
 export default function Comps() {
   const params = useParams<{ orderId: string }>();
@@ -122,6 +124,14 @@ export default function Comps() {
         <WeightsPanel 
           orderId={orderId!} 
           onWeightsApplied={handleWeightsApplied}
+        />
+      </div>
+
+      {/* ATTOM Closed Sales Picker */}
+      <div className="mb-6">
+        <AttomClosedSalesPicker 
+          orderId={orderId!} 
+          timeAdjustments={timeAdjustments}
         />
       </div>
 

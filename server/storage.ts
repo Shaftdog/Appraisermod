@@ -11,6 +11,8 @@ import fs from "fs";
 import path from "path";
 import { computeMarketMetrics } from "@shared/marketStats";
 import { format, subMonths, addMonths } from "date-fns";
+import { type ClosedSale } from "@shared/attom";
+import { calculateTimeAdjustment } from "@shared/timeAdjust";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -39,6 +41,7 @@ export interface IStorage {
   updateOrderWeights(orderId: string, weights: WeightSet, constraints: ConstraintSet, activeProfileId?: string, updatedBy?: string): Promise<OrderWeights>;
   resetOrderWeights(orderId: string, updatedBy?: string): Promise<OrderWeights>;
   getCompsWithScoring(orderId: string): Promise<{ comps: CompProperty[]; weights: OrderWeights }>;
+  addCompsFromAttomSales(orderId: string, saleIds: string[], applyTimeAdjustments?: boolean): Promise<{ count: number; addedComps: CompProperty[] }>;
 
   // Map & Comp Selection methods
   getSubject(orderId: string): Promise<Subject>;
@@ -386,7 +389,13 @@ export class DatabaseStorage implements IStorage {
 
   private userProfiles: WeightProfile[] = [];
   private orderWeights: Map<string, OrderWeights> = new Map();
-  private sampleComps: CompProperty[] = [
+  
+  // Order-scoped comp storage to prevent data bleed
+  private compsByOrder: Map<string, CompProperty[]> = new Map();
+  
+  // Initialize default sample comps for each order
+  private getDefaultCompsForOrder(): CompProperty[] {
+    return [
     {
       id: "comp-1",
       address: "123 Oak Street",
@@ -483,7 +492,54 @@ export class DatabaseStorage implements IStorage {
       quality: 4,
       condition: 4
     }
-  ];
+    ];
+  }
+  
+  private async getOrderComps(orderId: string): Promise<CompProperty[]> {
+    if (!this.compsByOrder.has(orderId)) {
+      // Try to load comps from file first
+      const compsFromFile = await this.loadCompsFromFile(orderId);
+      if (compsFromFile.length > 0) {
+        this.compsByOrder.set(orderId, compsFromFile);
+      } else {
+        // Initialize with default sample comps for this order
+        const defaultComps = this.getDefaultCompsForOrder();
+        this.compsByOrder.set(orderId, defaultComps);
+        // Save default comps to file for persistence
+        await this.saveCompsToFile(orderId, defaultComps);
+      }
+    }
+    return this.compsByOrder.get(orderId)!;
+  }
+
+  private async loadCompsFromFile(orderId: string): Promise<CompProperty[]> {
+    const compsPath = path.join(process.cwd(), 'data', 'orders', orderId, 'comps.json');
+    try {
+      const data = fs.readFileSync(compsPath, 'utf8');
+      return JSON.parse(data);
+    } catch (error) {
+      // File doesn't exist or invalid - return empty array
+      return [];
+    }
+  }
+
+  private async saveCompsToFile(orderId: string, comps: CompProperty[]): Promise<void> {
+    const orderDir = path.join(process.cwd(), 'data', 'orders', orderId);
+    const compsPath = path.join(orderDir, 'comps.json');
+    
+    try {
+      // Ensure directory exists
+      if (!fs.existsSync(orderDir)) {
+        fs.mkdirSync(orderDir, { recursive: true });
+      }
+      
+      // Write comps to file with proper formatting
+      fs.writeFileSync(compsPath, JSON.stringify(comps, null, 2), 'utf8');
+    } catch (error) {
+      console.error(`Failed to save comps for order ${orderId}:`, error);
+      throw new Error('Failed to persist comparable properties');
+    }
+  }
 
   async getShopDefaultProfile(): Promise<WeightProfile> {
     return this.shopDefault;
@@ -588,7 +644,8 @@ export class DatabaseStorage implements IStorage {
     const { scoreAndRankComps } = await import("../shared/scoring");
     const { isInsidePolygon } = await import("../shared/geo");
     
-    let compsWithLocation = [...this.sampleComps];
+    const orderComps = await this.getOrderComps(orderId);
+    let compsWithLocation = [...orderComps];
     
     // Add polygon and selection data to each comp
     compsWithLocation = compsWithLocation.map(comp => ({
@@ -716,6 +773,90 @@ export class DatabaseStorage implements IStorage {
     
     this.compSelections.set(orderId, selection);
     return selection;
+  }
+
+  async addCompsFromAttomSales(orderId: string, saleIds: string[], applyTimeAdjustments = false): Promise<{ count: number; addedComps: CompProperty[] }> {
+    // Load ATTOM sales from order-specific storage
+    const orderAttomPath = path.join(process.cwd(), 'data/orders', orderId, 'attom/closed-sales.json');
+    let attomSales: ClosedSale[] = [];
+    
+    try {
+      const data = fs.readFileSync(orderAttomPath, 'utf8');
+      attomSales = JSON.parse(data);
+    } catch (error) {
+      throw new Error('No ATTOM sales data found for this order. Import sales first.');
+    }
+    
+    // Filter to selected sales only
+    const selectedSales = attomSales.filter(sale => saleIds.includes(sale.id));
+    
+    if (selectedSales.length === 0) {
+      throw new Error('No matching sales found for the provided sale IDs');
+    }
+    
+    // Get subject and time adjustments if needed
+    const subject = await this.getSubject(orderId);
+    let timeAdjustments: TimeAdjustments | null = null;
+    
+    if (applyTimeAdjustments) {
+      timeAdjustments = await this.getTimeAdjustments(orderId);
+    }
+    
+    // Convert ClosedSale[] to CompProperty[]
+    const addedComps: CompProperty[] = selectedSales.map(sale => {
+      
+      // Calculate distance from subject (simplified to 0.5 miles for mock)
+      const distanceMiles = 0.5;
+      
+      // Calculate months since sale using effective date
+      let adjustedPrice = sale.closePrice;
+      let monthsSinceSale = 1;
+      
+      if (applyTimeAdjustments && timeAdjustments) {
+        // Use proper time adjustment calculation matching frontend and shared logic
+        const timeAdjResult = calculateTimeAdjustment(
+          sale.closePrice,
+          sale.closeDate,
+          sale.gla,
+          timeAdjustments.effectiveDateISO,
+          timeAdjustments.pctPerMonth,
+          timeAdjustments.basis
+        );
+        
+        adjustedPrice = timeAdjResult.adjustedPrice || sale.closePrice;
+        monthsSinceSale = timeAdjResult.months;
+      } else {
+        // Calculate months for display purposes when no adjustment applied
+        const saleDate = new Date(sale.closeDate);
+        const now = new Date();
+        monthsSinceSale = Math.max(1, Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24 * 30)));
+      }
+      
+      const comp: CompProperty = {
+        id: `attom-${sale.id}`, // Prefix to distinguish from existing mock comps
+        address: sale.address,
+        salePrice: Math.round(adjustedPrice),
+        saleDate: sale.closeDate,
+        distanceMiles,
+        monthsSinceSale,
+        latlng: { lat: sale.lat || 30.2730, lng: sale.lon || -97.7431 }, // Default to subject location if missing
+        gla: sale.gla || 1800, // Default GLA if missing
+        quality: 4, // Default quality rating
+        condition: 4 // Default condition rating
+      };
+      
+      return comp;
+    });
+    
+    // Add to order-scoped comp storage with persistence
+    const orderComps = await this.getOrderComps(orderId);
+    orderComps.push(...addedComps);
+    this.compsByOrder.set(orderId, orderComps);
+    
+    // CRITICAL: Persist comps to file to prevent data loss on restart
+    await this.saveCompsToFile(orderId, orderComps);
+    
+    return { count: addedComps.length, addedComps };
   }
 
   // Photos Module implementation

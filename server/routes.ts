@@ -38,6 +38,11 @@ const commentSchema = z.object({
   parentId: z.string().optional()
 });
 
+const addAttomCompsSchema = z.object({
+  saleIds: z.array(z.string()).min(1, 'At least one sale must be selected'),
+  applyTimeAdjustments: z.boolean().optional().default(false)
+});
+
 // Schema for backward compatibility - supports both new and legacy formats
 const signoffSchema = z.union([
   // New format: { accept: boolean, reason?: string }
@@ -962,6 +967,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw error;
       }
     } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add ATTOM sales as comparables
+  app.post("/api/orders/:id/comps/add-attom-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: 'Invalid order ID' });
+      }
+      
+      // Verify user has access to this order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Validate request body
+      const validationResult = addAttomCompsSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid request data", 
+          errors: validationResult.error.errors 
+        });
+      }
+
+      const { saleIds, applyTimeAdjustments } = validationResult.data;
+      
+      try {
+        const result = await storage.addCompsFromAttomSales(orderId, saleIds, applyTimeAdjustments);
+        res.json({ 
+          success: true, 
+          count: result.count,
+          message: `Successfully added ${result.count} comparable(s) from ATTOM sales data.`
+        });
+      } catch (error) {
+        if (error instanceof Error) {
+          return res.status(400).json({ message: error.message });
+        }
+        throw error;
+      }
+    } catch (error) {
+      console.error('Error adding ATTOM comps:', error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

@@ -15,6 +15,7 @@ export interface ParcelShape {
 }
 
 export interface ClosedSale {
+  id: string; // Stable unique identifier for backend tracking
   apn?: string;
   address: string;
   city?: string; 
