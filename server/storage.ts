@@ -1,5 +1,6 @@
 import { type User, type PublicUser, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
 import { type HabuState, type HabuInputs, type HabuResult, type ZoningData } from "@shared/habu";
+import { isPointInPolygon } from "@shared/geo";
 import { type ReviewItem, type RuleHit, type ReviewQueueItem, type Thread, type Comment, type DiffSummary, type Risk } from "../types/review";
 import { type PolicyPack } from "../types/policy";
 import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, type CompAdjustmentLine, type AttrAdjustment, type CostBaseline, type DepreciationCurve, DEFAULT_ENGINE_SETTINGS, ATTR_METADATA } from "@shared/adjustments";

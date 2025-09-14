@@ -108,9 +108,13 @@ export function isPointInPolygon(
   polygon: MarketPolygon
 ): boolean {
   try {
-    // Ensure MarketPolygon has properties for GeoJSON compatibility
-    const safePolygon = ensureGeoJSONProperties(polygon) as Feature<Polygon>;
-    return isInsidePolygon(safePolygon, point);
+    // Convert MarketPolygon to proper GeoJSON Feature
+    const geoJsonFeature: Feature<Polygon> = {
+      type: 'Feature',
+      properties: polygon.properties || {},
+      geometry: polygon.geometry
+    };
+    return isInsidePolygon(geoJsonFeature, point);
   } catch (error) {
     console.warn('Point-in-polygon check failed:', error);
     return false;
