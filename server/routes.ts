@@ -73,12 +73,32 @@ import { makeZip } from "../lib/zip/makeZip";
 import { sha256File } from "../lib/crypto/sha256";
 
 // CSRF protection middleware
-const APP_ORIGIN = new URL(process.env.APP_ORIGIN || 'http://localhost:5173').origin;
+function getAppOrigin(): string {
+  // If APP_ORIGIN is explicitly set, use it
+  if (process.env.APP_ORIGIN) {
+    return new URL(process.env.APP_ORIGIN).origin;
+  }
+  
+  // Auto-detect Replit environment
+  if (process.env.REPL_ID && process.env.REPL_SLUG) {
+    return `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
+  } else if (process.env.REPL_ID) {
+    // Fallback for older Replit format
+    return `https://${process.env.REPL_ID}.replit.app`;
+  }
+  
+  // Default to localhost for development
+  return 'http://localhost:5173';
+}
+
+const APP_ORIGIN = getAppOrigin();
+console.log(`[CSRF] APP_ORIGIN set to: ${APP_ORIGIN}`);
 
 function requireSameOrigin(req: any, res: any, next: any) {
   const origin = req.get('origin');
   // Allow same-origin and no-origin (e.g., curl) in dev; tighten if needed
   if (origin && origin !== APP_ORIGIN) {
+    console.log(`Origin mismatch: received "${origin}", expected "${APP_ORIGIN}"`);
     return res.status(403).json({ message: 'Bad origin' });
   }
   next();
