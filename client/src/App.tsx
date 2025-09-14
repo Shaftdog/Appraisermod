@@ -9,6 +9,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { ReviewerDashboard } from "@/pages/ReviewerDashboard";
 import { OrderReview } from "@/pages/OrderReview";
+import AdminPage from "@/pages/AdminPage";
 import NotFound from "@/pages/not-found";
 import OrderPage from "@/pages/orders/[orderId]";
 
@@ -18,6 +19,13 @@ function Router() {
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/" component={() => <Redirect to="/orders/order-123" />} />
+      
+      {/* Admin Routes */}
+      <Route path="/admin" component={() => (
+        <ProtectedRoute>
+          <AdminPage />
+        </ProtectedRoute>
+      )} />
       
       {/* Reviewer Routes */}
       <Route path="/reviewer" component={() => (

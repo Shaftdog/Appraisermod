@@ -1,0 +1,142 @@
+
+PROJECT TITLE Ops Hardening v1 — Feature flags, audit logs, telemetry KPIs, health checks, and rolling backups (no secured Photo API changes)
+SCOPE RULES
+* Do not touch secured Photo endpoints.
+* Add new mock routes and local persistence under /data/ops/* and /data/orders/<id>/versions/*.
+* Everything must be toggleable via feature flags.
+
+0) Config & Types
+config/flags.ts
+export const FLAGS = {
+  telemetry: true,
+  auditLog: true,
+  backups: true,
+  featureGatesUI: true,
+  healthChecks: true,
+} as const;
+types/ops.ts
+export interface AuditEvent {
+  id: string;
+  at: string;          // ISO
+  userId: string;
+  role: 'appraiser'|'reviewer'|'chief'|'admin';
+  action: string;      // 'signoff.reviewer', 'delivery.request', 'adjustments.apply'
+  orderId?: string;
+  path?: string;       // e.g. "market.timeAdjust.basis"
+  before?: any; after?: any;
+  ip?: string;
+}
+
+export interface TelemetryPoint {
+  at: string;             // ISO
+  k: 'export_time_ms'|'pdf_pages'|'review_red_hits'|'qc_status'|'time_adj_pct'|'delivery_size_bytes';
+  v: number;
+  dims?: Record<string,string|number>; // {orderId:'123', tab:'photos'}
+}
+
+export interface BackupRecord {
+  id: string;
+  at: string;
+  kind: 'order-snapshot'|'workfile';
+  orderId: string;
+  path: string;
+  bytes: number;
+  sha256: string;
+  rotationSlot: string; // hourly/daily/weekly
+}
+
+export interface HealthStatus {
+  ok: boolean;
+  checks: Array<{ name: string; ok: boolean; detail?: string }>;
+  at: string;
+}
+
+1) Feature Flags UI
+* Add a “Feature Flags” panel under /admin (visible if NEXT_PUBLIC_ROLE ∈ {chief,admin}).
+* Toggle flags at runtime (store in /data/ops/flags.json; load at startup with defaults from config/flags.ts).
+
+2) Audit Log (frontend + route)
+* Create lib/audit.ts with a helper:
+export async function audit(ev: Omit<AuditEvent,'id'|'at'|'ip'>) {
+  try { await fetch('/api/ops/audit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(ev), credentials:'include' }); } catch {}
+}
+* Instrument key actions (call audit()):
+    * Reviewer approve / request changes
+    * Appraiser submit revisions
+    * Adjustments “Apply to Comps”
+    * Delivery request (and result)
+    * Time adjustment saved
+* Route handlers:
+    * POST /api/ops/audit → append to /data/ops/audit.log.jsonl (one JSON per line; add id, at, ip).
+    * GET /api/ops/audit?orderId=…&limit=… → returns recent events.
+* Add Order → “Activity” tab section to view latest 50 audit events (filter by orderId).
+
+3) Telemetry (KPIs)
+* Client helper lib/telemetry.ts:
+export function kpi(k: TelemetryPoint['k'], v: number, dims: TelemetryPoint['dims']={}) {
+  if (!window.__FLAGS?.telemetry) return;
+  navigator.sendBeacon?.('/api/ops/telemetry', new Blob([JSON.stringify({ at:new Date().toISOString(), k, v, dims })], {type:'application/json'}));
+}
+* Fire KPIs:
+    * After PDF export: k='export_time_ms', k='pdf_pages', k='delivery_size_bytes'
+    * After Review run: k='review_red_hits'
+    * On QC compute: k='qc_status' (map green=0,yellow=1,red=2)
+    * On time adj save: k='time_adj_pct' (basis in dims)
+* Routes:
+    * POST /api/ops/telemetry → append to /data/ops/telemetry.jsonl
+    * GET /api/ops/telemetry/summary?since=… → return simple rollups (count, avg, p95 by key)
+* Admin dashboard widget /admin/ops:
+    * Cards for last 24h: #deliveries, avg export time, p95 export time, #red reviews, avg time_adj_pct
+    * Tiny sparkline per KPI (use recharts)
+
+4) Health Checks
+* Route: GET /api/ops/health
+    * Checks:
+        * R/W to /data (create/delete temp)
+        * JSON parse of core files (orders index)
+        * File existence: key artifacts (e.g., addenda PDF when delivery says delivered)
+        * Disk free estimate (Node fs/statvfs fallback with mock)
+    * Return HealthStatus
+* UI badge in header (green/yellow/red) with tooltip.
+
+5) Backups & Versioning (rotating snapshots)
+* Add route POST /api/orders/:id/version/snapshot?kind=order-snapshot
+    * Coalesce relevant JSON for the order (subject, comps, market, adjustments, review, delivery meta) into /data/orders/<id>/versions/<timestamp>.json
+    * Compute SHA-256; write a BackupRecord in /data/ops/backups.jsonl
+* Rotation job (triggered manually for now):
+    * POST /api/ops/backups/run-rotation
+    * Keep: hourly (24), daily (7), weekly (4) snapshots (old beyond rotation are pruned)
+* UI:
+    * In Exports or Admin, show “Create Snapshot” button and a list of versions with Restore (dry-run).
+    * Dry-run restore just compares differences (shows DiffViewer) and prints the file list to restore (no actual overwrite in this sprint).
+Utility lib/crypto/sha256.ts to compute checksums.
+
+6) Minimal Rate Limits (per IP)
+* Add simple token bucket in memory for routes:
+    * /api/ops/audit and /api/ops/telemetry: 120/min per IP
+    * Delivery request: 10/min per IP
+    * Respond 429 with Retry-After header when exceeded.
+
+7) Acceptance Criteria
+* Feature Flags: toggling telemetry/audit/backups/healthChecks affects behavior immediately; flags persisted.
+* Audit Log: core actions emit events; Order “Activity” tab shows recent items; events include user/role and path.
+* Telemetry: KPIs recorded; /admin/ops shows 24h summary with simple sparklines.
+* Health: /api/ops/health returns OK with sub-checks; header badge reflects status.
+* Backups: Snapshot creates /versions/<timestamp>.json with checksum; rotation keeps hourly/daily/weekly sets; list+dry-run restore works.
+* Rate limits: burst hammering endpoints returns 429.
+
+8) Quick Manual Test (3 minutes)
+1. Toggle Feature Flags in /admin.
+2. Perform: a) reviewer approve, b) delivery request, c) export PDF.
+3. Check Order → Activity shows 3 events.
+4. Visit /admin/ops → sparklines populate; export time and red hits counters move.
+5. Hit /api/ops/health → see green checks.
+6. Click Create Snapshot; verify a file appears under /versions/ with checksum; run rotation; old snapshots pruned.
+7. Script a quick loop to post telemetry and confirm 429 after the limit.
+
+9) Non-Goals (this sprint)
+* No real SFTP/email delivery (future).
+* No automatic scheduled cron—use manual buttons now (can add CRON later).
+* No destructive restore (only dry-run compare for safety).
+
+Deliver exactly this Ops Hardening slice so the platform has feature gates, traceability, health visibility, and recoverability—ready for real-world use.

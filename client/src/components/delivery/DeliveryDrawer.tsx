@@ -44,11 +44,13 @@ import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
 import type { DeliveryRequest, DeliveryClient, DeliveryPackage, PackageItem } from '../../../../types/delivery';
 
-// Form validation schema
+// Form validation schema - matching server expectations
 const deliveryFormSchema = z.object({
-  clientId: z.string().min(1, 'Please select a client'),
-  formats: z.array(z.enum(['uad_xml', 'photos', 'workfile_zip'])).min(1, 'Please select at least one format'),
-  deliveryMethod: z.enum(['download', 'email', 'ftp']).default('download'),
+  clientProfileId: z.string().min(1, 'Please select a client'),
+  includeWorkfile: z.boolean().default(false),
+  includeMismo: z.boolean().default(false),
+  finalize: z.boolean().default(true),
+  formats: z.array(z.enum(['uad_xml', 'photos', 'workfile_zip'])).optional().default(['uad_xml', 'workfile_zip']),
 });
 
 type DeliveryFormValues = z.infer<typeof deliveryFormSchema>;
@@ -90,9 +92,11 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
     resolver: zodResolver(deliveryFormSchema),
     mode: 'onChange',
     defaultValues: {
-      clientId: '',
-      formats: [],
-      deliveryMethod: 'download',
+      clientProfileId: '',
+      includeWorkfile: true,
+      includeMismo: true,
+      finalize: true,
+      formats: ['uad_xml', 'workfile_zip'],
     },
   });
 
@@ -107,9 +111,9 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
     mutationFn: async (data: DeliveryFormValues) => {
       const deliveryRequest: DeliveryRequest = {
         orderId,
-        clientId: data.clientId,
+        clientProfileId: data.clientProfileId,
         formats: data.formats,
-        deliveryMethod: data.deliveryMethod,
+        finalize: data.finalize,
       };
       
       const response = await apiRequest('POST', '/api/delivery/request', deliveryRequest);
@@ -225,7 +229,7 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
                 {/* Client Selection */}
                 <FormField
                   control={form.control}
-                  name="clientId"
+                  name="clientProfileId"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Delivery Client</FormLabel>
@@ -304,7 +308,7 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
                 {/* Delivery Method */}
                 <FormField
                   control={form.control}
-                  name="deliveryMethod"
+                  name="includeMismo"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Delivery Method</FormLabel>

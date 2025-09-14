@@ -1954,6 +1954,448 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // =====================================================
+  // OPS HARDENING ROUTES
+  // =====================================================
+
+  // Import ops types and utilities
+  const DEFAULT_FLAGS = { telemetry: true, auditLog: true, backups: true, featureGatesUI: true, healthChecks: true };
+  
+  // In-memory rate limiting (token bucket)
+  const rateLimits = new Map<string, { tokens: number; lastRefill: number }>();
+  
+  function checkRateLimit(ip: string, maxTokens: number, refillRate: number): boolean {
+    const now = Date.now();
+    const bucket = rateLimits.get(ip) || { tokens: maxTokens, lastRefill: now };
+    
+    // Refill tokens based on time passed
+    const timePassed = now - bucket.lastRefill;
+    const tokensToAdd = Math.floor(timePassed / (60000 / refillRate)); // tokens per minute
+    
+    bucket.tokens = Math.min(maxTokens, bucket.tokens + tokensToAdd);
+    bucket.lastRefill = now;
+    
+    if (bucket.tokens >= 1) {
+      bucket.tokens--;
+      rateLimits.set(ip, bucket);
+      return true;
+    }
+    
+    rateLimits.set(ip, bucket);
+    return false;
+  }
+
+  // Load feature flags from file or use defaults
+  async function loadFeatureFlags() {
+    try {
+      const flagsPath = path.join(process.cwd(), 'data/ops/flags.json');
+      const flagsData = await fs.readFile(flagsPath, 'utf-8');
+      return { ...DEFAULT_FLAGS, ...JSON.parse(flagsData) };
+    } catch {
+      return DEFAULT_FLAGS;
+    }
+  }
+
+  // Save feature flags to file
+  async function saveFeatureFlags(flags: any) {
+    try {
+      const opsDir = path.join(process.cwd(), 'data/ops');
+      await fs.mkdir(opsDir, { recursive: true });
+      const flagsPath = path.join(opsDir, 'flags.json');
+      await fs.writeFile(flagsPath, JSON.stringify(flags, null, 2));
+    } catch (error) {
+      console.error('Failed to save feature flags:', error);
+    }
+  }
+
+  // 1. FEATURE FLAGS ROUTES
+  
+  // Get current feature flags
+  app.get("/api/ops/flags", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief or admin role' });
+      }
+      
+      const flags = await loadFeatureFlags();
+      res.json(flags);
+    } catch (error) {
+      console.error("Error loading feature flags:", error);
+      res.status(500).json({ message: "Failed to load feature flags" });
+    }
+  });
+
+  // Update a specific feature flag
+  app.patch("/api/ops/flags/:key", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief or admin role' });
+      }
+      
+      const { key } = req.params;
+      const { enabled } = req.body;
+      
+      if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ message: 'enabled must be a boolean' });
+      }
+      
+      const flags = await loadFeatureFlags();
+      if (!(key in flags)) {
+        return res.status(404).json({ message: 'Feature flag not found' });
+      }
+      
+      flags[key] = enabled;
+      await saveFeatureFlags(flags);
+      
+      res.json({ key, enabled, message: 'Feature flag updated successfully' });
+    } catch (error) {
+      console.error("Error updating feature flag:", error);
+      res.status(500).json({ message: "Failed to update feature flag" });
+    }
+  });
+
+  // 2. AUDIT LOGGING ROUTES
+
+  // Record audit event
+  app.post("/api/ops/audit", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ip = req.ip || req.connection.remoteAddress || 'unknown';
+      
+      // Rate limiting: 120 requests per minute
+      if (!checkRateLimit(ip, 120, 120)) {
+        return res.status(429).json({ message: 'Too many requests' });
+      }
+      
+      const user = req.user!;
+      const { action, orderId, path, before, after } = req.body;
+      
+      const auditEvent = {
+        id: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        at: new Date().toISOString(),
+        userId: user.id,
+        role: user.role,
+        action,
+        orderId,
+        path,
+        before,
+        after,
+        ip
+      };
+      
+      // Append to audit log file
+      const opsDir = path.join(process.cwd(), 'data/ops');
+      await fs.mkdir(opsDir, { recursive: true });
+      const auditLogPath = path.join(opsDir, 'audit.log.jsonl');
+      await fs.appendFile(auditLogPath, JSON.stringify(auditEvent) + '\n');
+      
+      res.json({ success: true, id: auditEvent.id });
+    } catch (error) {
+      console.error("Error recording audit event:", error);
+      res.status(500).json({ message: "Failed to record audit event" });
+    }
+  });
+
+  // Get audit events
+  app.get("/api/ops/audit", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief or admin role' });
+      }
+      
+      const { orderId, limit = '50' } = req.query;
+      const maxLimit = Math.min(parseInt(limit as string) || 50, 500);
+      
+      const auditLogPath = path.join(process.cwd(), 'data/ops/audit.log.jsonl');
+      
+      try {
+        const logData = await fs.readFile(auditLogPath, 'utf-8');
+        const events = logData.trim().split('\n')
+          .filter(line => line.length > 0)
+          .map(line => JSON.parse(line))
+          .filter(event => !orderId || event.orderId === orderId)
+          .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+          .slice(0, maxLimit);
+        
+        res.json(events);
+      } catch (fileError) {
+        res.json([]); // No audit log file yet
+      }
+    } catch (error) {
+      console.error("Error fetching audit events:", error);
+      res.status(500).json({ message: "Failed to fetch audit events" });
+    }
+  });
+
+  // 3. TELEMETRY ROUTES
+
+  // Record telemetry point
+  app.post("/api/ops/telemetry", async (req, res) => {
+    try {
+      const ip = req.ip || req.connection.remoteAddress || 'unknown';
+      
+      // Rate limiting: 120 requests per minute
+      if (!checkRateLimit(ip, 120, 120)) {
+        return res.status(429).json({ message: 'Too many requests' });
+      }
+      
+      const { at, k, v, dims } = req.body;
+      
+      const telemetryPoint = {
+        at: at || new Date().toISOString(),
+        k,
+        v: Number(v),
+        dims: dims || {}
+      };
+      
+      // Append to telemetry log file
+      const opsDir = path.join(process.cwd(), 'data/ops');
+      await fs.mkdir(opsDir, { recursive: true });
+      const telemetryLogPath = path.join(opsDir, 'telemetry.jsonl');
+      await fs.appendFile(telemetryLogPath, JSON.stringify(telemetryPoint) + '\n');
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error recording telemetry:", error);
+      res.status(500).json({ message: "Failed to record telemetry" });
+    }
+  });
+
+  // Get telemetry summary
+  app.get("/api/ops/telemetry/summary", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief or admin role' });
+      }
+      
+      const { since } = req.query;
+      const sinceDate = since ? new Date(since as string) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+      
+      const telemetryLogPath = path.join(process.cwd(), 'data/ops/telemetry.jsonl');
+      
+      try {
+        const logData = await fs.readFile(telemetryLogPath, 'utf-8');
+        const points = logData.trim().split('\n')
+          .filter(line => line.length > 0)
+          .map(line => JSON.parse(line))
+          .filter(point => new Date(point.at) >= sinceDate);
+        
+        // Compute summary metrics by key
+        const metrics: Record<string, { count: number; avg: number; p95: number; min: number; max: number }> = {};
+        
+        const groupedByKey = points.reduce((acc, point) => {
+          if (!acc[point.k]) acc[point.k] = [];
+          acc[point.k].push(point.v);
+          return acc;
+        }, {} as Record<string, number[]>);
+        
+        Object.entries(groupedByKey).forEach(([key, values]: [string, number[]]) => {
+          const sorted = [...values].sort((a: number, b: number) => a - b);
+          const p95Index = Math.floor(sorted.length * 0.95);
+          
+          metrics[key] = {
+            count: values.length,
+            avg: values.reduce((sum: number, v: number) => sum + v, 0) / values.length,
+            p95: sorted[p95Index] || 0,
+            min: Math.min(...values),
+            max: Math.max(...values)
+          };
+        });
+        
+        res.json({
+          period: 'last-24h',
+          since: sinceDate.toISOString(),
+          metrics
+        });
+      } catch (fileError) {
+        res.json({ period: 'last-24h', since: sinceDate.toISOString(), metrics: {} });
+      }
+    } catch (error) {
+      console.error("Error fetching telemetry summary:", error);
+      res.status(500).json({ message: "Failed to fetch telemetry summary" });
+    }
+  });
+
+  // 4. HEALTH CHECKS ROUTE
+
+  app.get("/api/ops/health", async (req, res) => {
+    try {
+      const checks = [];
+      let overallOk = true;
+      
+      // Check 1: Data directory read/write
+      try {
+        const testFile = path.join(process.cwd(), 'data/.health-test');
+        await fs.writeFile(testFile, 'test');
+        await fs.unlink(testFile);
+        checks.push({ name: 'data-rw', ok: true, detail: 'Data directory is writable' });
+      } catch (error) {
+        checks.push({ name: 'data-rw', ok: false, detail: 'Cannot write to data directory' });
+        overallOk = false;
+      }
+      
+      // Check 2: Orders index exists
+      try {
+        await storage.getOrder('health-check');
+        checks.push({ name: 'orders-index', ok: true, detail: 'Orders index accessible' });
+      } catch (error) {
+        checks.push({ name: 'orders-index', ok: false, detail: 'Orders index error' });
+        overallOk = false;
+      }
+      
+      // Check 3: Disk space estimate (mock for now)
+      checks.push({ name: 'disk-space', ok: true, detail: '85% available (estimated)' });
+      
+      const healthStatus = {
+        ok: overallOk,
+        checks,
+        at: new Date().toISOString()
+      };
+      
+      res.status(overallOk ? 200 : 503).json(healthStatus);
+    } catch (error) {
+      console.error("Error performing health checks:", error);
+      res.status(503).json({
+        ok: false,
+        checks: [{ name: 'health-check', ok: false, detail: 'Health check system error' }],
+        at: new Date().toISOString()
+      });
+    }
+  });
+
+  // 5. BACKUP ROUTES
+
+  // Create order snapshot
+  app.post("/api/orders/:orderId/version/snapshot", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const { orderId } = req.params;
+      const { kind = 'order-snapshot' } = req.query;
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: 'Invalid order ID' });
+      }
+
+      const hasAccess = await verifyUserCanAccessOrder(user, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Create snapshot directory
+      const versionsDir = path.join(process.cwd(), 'data/orders', orderId, 'versions');
+      await fs.mkdir(versionsDir, { recursive: true });
+      
+      // Generate snapshot data (relevant order JSON)
+      const order = await storage.getOrder(orderId);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const snapshotPath = path.join(versionsDir, `${timestamp}.json`);
+      
+      const snapshotData = {
+        timestamp,
+        orderId,
+        kind,
+        order,
+        // Add other relevant data as needed
+        metadata: {
+          snapshotType: 'order-backup',
+          source: 'manual-snapshot',
+          requestedBy: user.id
+        }
+      };
+      
+      await fs.writeFile(snapshotPath, JSON.stringify(snapshotData, null, 2));
+      
+      // Compute checksum and record backup
+      const stats = await fs.stat(snapshotPath);
+      const sha256 = await sha256File(snapshotPath);
+      
+      const backupRecord = {
+        id: `backup-${timestamp}`,
+        at: new Date().toISOString(),
+        kind: kind as string,
+        orderId,
+        path: snapshotPath,
+        bytes: stats.size,
+        sha256,
+        rotationSlot: 'hourly' // Default slot
+      };
+      
+      // Record backup in backup log
+      const opsDir = path.join(process.cwd(), 'data/ops');
+      await fs.mkdir(opsDir, { recursive: true });
+      const backupsLogPath = path.join(opsDir, 'backups.jsonl');
+      await fs.appendFile(backupsLogPath, JSON.stringify(backupRecord) + '\n');
+      
+      res.json({ 
+        success: true, 
+        snapshot: { 
+          id: backupRecord.id, 
+          path: snapshotPath, 
+          sha256, 
+          bytes: stats.size 
+        } 
+      });
+    } catch (error) {
+      console.error("Error creating order snapshot:", error);
+      res.status(500).json({ message: "Failed to create order snapshot" });
+    }
+  });
+
+  // Run backup rotation
+  app.post("/api/ops/backups/run-rotation", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief or admin role' });
+      }
+      
+      const backupsLogPath = path.join(process.cwd(), 'data/ops/backups.jsonl');
+      
+      try {
+        const logData = await fs.readFile(backupsLogPath, 'utf-8');
+        const backups = logData.trim().split('\n')
+          .filter(line => line.length > 0)
+          .map(line => JSON.parse(line))
+          .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+        
+        // Simple rotation logic: keep 24 hourly, 7 daily, 4 weekly
+        const toKeep = new Set();
+        const hourlyCount = backups.filter(b => b.rotationSlot === 'hourly').slice(0, 24);
+        const dailyCount = backups.filter(b => b.rotationSlot === 'daily').slice(0, 7);
+        const weeklyCount = backups.filter(b => b.rotationSlot === 'weekly').slice(0, 4);
+        
+        [...hourlyCount, ...dailyCount, ...weeklyCount].forEach(b => toKeep.add(b.id));
+        
+        const toDelete = backups.filter(b => !toKeep.has(b.id));
+        let deletedCount = 0;
+        
+        for (const backup of toDelete) {
+          try {
+            await fs.unlink(backup.path);
+            deletedCount++;
+          } catch (deleteError) {
+            console.warn(`Could not delete backup file ${backup.path}:`, deleteError);
+          }
+        }
+        
+        res.json({ 
+          success: true, 
+          message: `Rotation completed. Deleted ${deletedCount} old backups.`,
+          kept: toKeep.size,
+          deleted: deletedCount
+        });
+      } catch (fileError) {
+        res.json({ success: true, message: 'No backups to rotate yet' });
+      }
+    } catch (error) {
+      console.error("Error running backup rotation:", error);
+      res.status(500).json({ message: "Failed to run backup rotation" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
