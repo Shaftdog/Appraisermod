@@ -2444,6 +2444,153 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ====================== ATTOM DATA ROUTES ======================
+  
+  // Import ATTOM modules
+  const { importClosedSales, importParcels, importSubjectByAddress } = require('./attom/importer');
+  
+  // ATTOM Import Routes
+  app.post("/api/attom/import/closed-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin', 'appraiser'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief, admin, or appraiser role' });
+      }
+      
+      if (!process.env.ATTOM_API_KEY) {
+        return res.status(500).json({ message: 'ATTOM_API_KEY not configured' });
+      }
+      
+      const { ATTOM } = require('../config/attom');
+      const results = [];
+      
+      for (const county of ATTOM.counties) {
+        try {
+          const result = await importClosedSales(county);
+          results.push({ county, ...result });
+        } catch (error: any) {
+          results.push({ county, error: error.message });
+        }
+      }
+      
+      res.json({ results });
+    } catch (error: any) {
+      console.error("Error importing closed sales:", error);
+      res.status(500).json({ message: error.message || "Failed to import closed sales" });
+    }
+  });
+
+  app.post("/api/attom/import/parcels", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin', 'appraiser'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief, admin, or appraiser role' });
+      }
+      
+      if (!process.env.ATTOM_API_KEY) {
+        return res.status(500).json({ message: 'ATTOM_API_KEY not configured' });
+      }
+      
+      const { ATTOM } = require('../config/attom');
+      const results = [];
+      
+      for (const county of ATTOM.counties) {
+        try {
+          const result = await importParcels(county);
+          results.push({ county, ...result });
+        } catch (error: any) {
+          results.push({ county, error: error.message });
+        }
+      }
+      
+      res.json({ results });
+    } catch (error: any) {
+      console.error("Error importing parcels:", error);
+      res.status(500).json({ message: error.message || "Failed to import parcels" });
+    }
+  });
+
+  // ATTOM Subject Lookup
+  app.post("/api/attom/subject/lookup", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin', 'appraiser'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied - requires chief, admin, or appraiser role' });
+      }
+      
+      if (!process.env.ATTOM_API_KEY) {
+        return res.status(500).json({ message: 'ATTOM_API_KEY not configured' });
+      }
+      
+      const { addressLine1, city, state = 'FL', zip } = req.body;
+      
+      if (!addressLine1 || !city) {
+        return res.status(400).json({ message: 'addressLine1 and city are required' });
+      }
+      
+      const subject = await importSubjectByAddress(addressLine1, city, state, zip);
+      
+      if (!subject) {
+        return res.status(404).json({ message: 'Property not found in ATTOM database' });
+      }
+      
+      res.json({ subject, source: 'ATTOM' });
+    } catch (error: any) {
+      console.error("Error looking up subject:", error);
+      res.status(500).json({ message: error.message || "Failed to lookup subject property" });
+    }
+  });
+
+  // ATTOM Closed Sales Data (for Market tab)
+  app.get("/api/attom/market/closed-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin', 'appraiser', 'reviewer'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const county = req.query.county as string || 'Seminole';
+      const filePath = path.join(process.cwd(), 'data/attom/closed_sales', `FL_${county.replace(/\s+/g,'')}.json`);
+      
+      try {
+        const data = await fs.readFile(filePath, 'utf8');
+        const sales = JSON.parse(data);
+        res.json({ county, sales, source: 'ATTOM' });
+      } catch (fileError) {
+        // File doesn't exist or can't be read
+        res.json({ county, sales: [], source: 'ATTOM', message: 'No cached data available. Please import first.' });
+      }
+    } catch (error: any) {
+      console.error("Error serving closed sales:", error);
+      res.status(500).json({ message: error.message || "Failed to load closed sales data" });
+    }
+  });
+
+  // ATTOM Parcels Data
+  app.get("/api/attom/parcels", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (!['chief', 'admin', 'appraiser', 'reviewer'].includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      
+      const county = req.query.county as string || 'Seminole';
+      const filePath = path.join(process.cwd(), 'data/attom/parcels', `FL_${county.replace(/\s+/g,'')}.json`);
+      
+      try {
+        const data = await fs.readFile(filePath, 'utf8');
+        const parcels = JSON.parse(data);
+        res.json({ county, parcels, source: 'ATTOM' });
+      } catch (fileError) {
+        // File doesn't exist or can't be read
+        res.json({ county, parcels: [], source: 'ATTOM', message: 'No cached data available. Please import first.' });
+      }
+    } catch (error: any) {
+      console.error("Error serving parcels:", error);
+      res.status(500).json({ message: error.message || "Failed to load parcels data" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

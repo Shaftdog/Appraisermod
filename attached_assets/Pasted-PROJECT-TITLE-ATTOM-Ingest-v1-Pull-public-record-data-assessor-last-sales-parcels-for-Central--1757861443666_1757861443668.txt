@@ -1,0 +1,262 @@
+PROJECT TITLE ATTOM Ingest v1 — Pull public-record data (assessor, last sales, parcels) for Central Florida; store locally; expose simple APIs the app already understands. No changes to secured Photo API.
+IMPORTANT
+* Do NOT hardcode the API key. Read from process.env.ATTOM_API_KEY.
+* Add a .env.example entry: ATTOM_API_KEY=your_key_here.
+* Keep attribution: show “Source: ATTOM Data Solutions” in the UI where we display ATTOM values.
+
+1) Config
+Add config/attom.ts:
+export const ATTOM = {
+  baseUrl: 'https://api.gateway.attomdata.com', // do not change
+  headers: (key: string) => ({ 'Accept': 'application/json', 'apikey': key }),
+  counties: ['Seminole', 'Orange', 'Volusia'], // starter scope for Mid-Florida
+  monthsBackClosedSales: 24,
+};
+Add key to .env.example:
+ATTOM_API_KEY=
+
+2) Types
+Create types/attom.ts (only the fields we need):
+export interface AttomProperty {
+  attomId?: string;
+  apn?: string;
+  address: { line1?: string; city?: string; state?: string; zip?: string };
+  location?: { lat?: number; lon?: number };
+  char?: { yearBuilt?: number; sqft?: number; lotSizeSqft?: number; beds?: number; baths?: number };
+  assessment?: { landValue?: number; improvementValue?: number; totalValue?: number; taxYear?: number };
+  lastSale?: { price?: number; date?: string; docNum?: string };
+}
+
+export interface ParcelShape {
+  apn?: string;
+  wkt?: string;         // store WKT or GeoJSON; v1 keep WKT string for simplicity
+  bbox?: number[];      // [minX,minY,maxX,maxY]
+}
+
+export interface ClosedSale {
+  apn?: string;
+  address: string;
+  city?: string; state?: string; zip?: string;
+  closeDate: string;
+  closePrice: number;
+  gla?: number;
+  lotSizeSqft?: number;
+  lat?: number; lon?: number;
+}
+
+3) Server: ATTOM client + importer
+Create server/attom/client.ts:
+import { ATTOM } from '@/config/attom';
+
+export async function attomGet(path: string, key: string, params: Record<string, any> = {}) {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) usp.set(k, String(v));
+  const url = `${ATTOM.baseUrl}${path}?${usp.toString()}`;
+  const res = await fetch(url, { headers: ATTOM.headers(key) });
+  if (!res.ok) throw new Error(`ATTOM ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+Create server/attom/importer.ts:
+import fs from 'fs/promises';
+import path from 'path';
+import { ATTOM } from '@/config/attom';
+import { attomGet } from './client';
+
+const DATA_ROOT = 'data/attom';
+
+function ensureDir(p: string) { return fs.mkdir(p, { recursive: true }); }
+
+export async function importClosedSales(county: string, monthsBack = ATTOM.monthsBackClosedSales) {
+  const key = process.env.ATTOM_API_KEY!;
+  if (!key) throw new Error('Missing ATTOM_API_KEY');
+
+  // Example endpoint patterns (do not hardcode assumptions; these are shaped for our use):
+  // 1) Closed sales by geography/time (ATTOM has sales/transfer endpoints; here we filter by county + date range)
+  const since = new Date(); since.setMonth(since.getMonth() - monthsBack);
+  const sinceIso = since.toISOString().slice(0,10);
+
+  // Call #1: sales list (paged). Keep it simple: loop pages up to a safe max.
+  let page = 1, maxPages = 20;
+  const sales: any[] = [];
+  while (page <= maxPages) {
+    const data = await attomGet('/propertyapi/v1.0.0/saleshistory/snapshot', key, {
+      countyname: county, state: 'FL', page, pagesize: 100, startdate: sinceIso
+    }).catch(err => { console.error('ATTOM sales error', err.message); return { sales: [] }; });
+
+    const items = (data?.sales || data?.property || []);
+    if (!items.length) break;
+    sales.push(...items);
+    page += 1;
+  }
+
+  // Normalize minimal fields into ClosedSale[]
+  const normalized = sales.map((s: any) => {
+    const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
+    return {
+      apn: s?.identifier?.apn || s?.identifier?.apnOriginal,
+      address,
+      city: s?.address?.city,
+      state: s?.address?.state,
+      zip: s?.address?.zip,
+      closeDate: s?.saleTransDate || s?.sale?.saleDate,
+      closePrice: Number(s?.saleAmount || s?.sale?.amount || 0),
+      gla: Number(s?.building?.size?.grossSize || s?.building?.size?.universalsize || s?.building?.size?.livingsize || 0),
+      lotSizeSqft: Number(s?.lot?.lotSize1 || s?.lot?.lotSize || 0),
+      lat: s?.location?.latitude, lon: s?.location?.longitude
+    };
+  }).filter((x: any) => x.closeDate && x.closePrice);
+
+  await ensureDir(path.join(DATA_ROOT, 'closed_sales'));
+  const out = path.join(DATA_ROOT, 'closed_sales', `FL_${county.replace(/\s+/g,'')}.json`);
+  await fs.writeFile(out, JSON.stringify(normalized, null, 2), 'utf8');
+  return { file: out, count: normalized.length };
+}
+
+export async function importParcels(county: string) {
+  const key = process.env.ATTOM_API_KEY!;
+  if (!key) throw new Error('Missing ATTOM_API_KEY');
+
+  // Minimal parcel shape pull (exact path may differ per plan; placeholder flow):
+  const data = await attomGet('/propertyapi/v1.0.0/parcelsummary/snapshot', key, {
+    countyname: county, state: 'FL', pagesize: 100, page: 1
+  }).catch(() => ({ parcels: [] }));
+  const items = (data?.parcels || data?.property || []);
+  const normalized = items.map((p: any) => ({
+    apn: p?.identifier?.apn,
+    wkt: p?.area?.geometryWkt || undefined,
+    bbox: p?.area?.bbox || undefined
+  })).filter((x: any) => x.wkt);
+
+  const outDir = path.join(DATA_ROOT, 'parcels');
+  await ensureDir(outDir);
+  const out = path.join(outDir, `FL_${county.replace(/\s+/g,'')}.json`);
+  await fs.writeFile(out, JSON.stringify(normalized, null, 2), 'utf8');
+  return { file: out, count: normalized.length };
+}
+
+export async function importSubjectByAddress(addressLine1: string, city: string, state='FL', zip?: string) {
+  const key = process.env.ATTOM_API_KEY!;
+  const data = await attomGet('/propertyapi/v1.0.0/property/detail', key, {
+    address1: addressLine1, city, state, postalcode: zip
+  });
+  const p = Array.isArray(data?.property) ? data.property[0] : data?.property;
+  if (!p) return null;
+
+  const subject = {
+    attomId: p?.identifier?.attomId,
+    apn: p?.identifier?.apn,
+    address: { line1: p?.address?.line1, city: p?.address?.city, state: p?.address?.state, zip: p?.address?.postal1 },
+    location: { lat: p?.location?.latitude, lon: p?.location?.longitude },
+    char: {
+      yearBuilt: p?.building?.summary?.yearbuilt,
+      sqft: p?.building?.size?.livingsize,
+      lotSizeSqft: p?.lot?.lotsize1,
+      beds: p?.building?.rooms?.beds,
+      baths: p?.building?.rooms?.bathsfull
+    },
+    assessment: {
+      landValue: p?.assessment?.land?.assessed,
+      improvementValue: p?.assessment?.improvements?.assessed,
+      totalValue: p?.assessment?.assessed?.assessed,
+      taxYear: p?.assessment?.year
+    },
+    lastSale: {
+      price: p?.sale?.amount,
+      date: p?.sale?.saledate,
+      docNum: p?.sale?.documentnum
+    }
+  };
+  await ensureDir('data/attom/subjects');
+  await fs.writeFile(`data/attom/subjects/${subject.attomId || subject.apn || 'subject'}.json`, JSON.stringify(subject, null, 2));
+  return subject;
+}
+
+4) Routes (Next.js API) to trigger imports and serve app-ready data
+Create:
+* app/api/attom/import/closed-sales/route.ts
+* app/api/attom/import/parcels/route.ts
+* app/api/attom/subject/lookup/route.ts
+* app/api/attom/market/closed-sales/route.ts
+Example closed-sales import route:
+import { NextResponse } from 'next/server';
+import { importClosedSales } from '@/server/attom/importer';
+import { ATTOM } from '@/config/attom';
+
+export async function POST() {
+  const results = [];
+  for (const c of ATTOM.counties) {
+    const r = await importClosedSales(c).catch(e => ({ error: e.message, county: c }));
+    results.push({ county: c, ...r });
+  }
+  return NextResponse.json({ results });
+}
+Serve closed sales for Market tab:
+import fs from 'fs/promises';
+import path from 'path';
+import { NextResponse } from 'next/server';
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const county = url.searchParams.get('county') || 'Seminole';
+  const file = path.join('data/attom/closed_sales', `FL_${county.replace(/\s+/g,'')}.json`);
+  try {
+    const json = JSON.parse(await fs.readFile(file, 'utf8'));
+    return NextResponse.json({ county, sales: json, source: 'ATTOM' });
+  } catch {
+    return NextResponse.json({ county, sales: [] });
+  }
+}
+Subject lookup uses importSubjectByAddress and returns the normalized subject.
+
+5) Wire the UI (minimal)
+Subject tab
+* Add a “Lookup from ATTOM” box (address, city, zip) → calls /api/attom/subject/lookup.
+* Fill empty fields (GLA, beds, baths, year built, lot, last sale) with ATTOM values if MLS is missing.
+* Show small attribution: “Source: ATTOM”.
+Market tab
+* Add a data source toggle: Source = [MLS (when ready) | ATTOM (closed sales)].
+* When ATTOM is selected, call /api/attom/market/closed-sales?county=Seminole (or detected county).
+* Feed the monthly medians into your existing Trend chart. Everything else (absorption, MOI) can stay simple for now (based on closed counts per month; active inventory will come from MLS later).
+Comps tab
+* Allow “Add from ATTOM closed sales”: opens a picker (table with address, close date/price, GLA, lot).
+* When selected, they appear as comps with a source badge (“ATTOM”) and are time-adjusted by your existing MCR rate.
+Land tab
+* Filter the ATTOM closed sales where landonly/vacant flag exists (if present in payload) or fallback: GLA missing + lot present → treat as potential land sale. Mark as needs review.
+
+6) Background job (manual button for now)
+Add an Admin → Data panel button:
+* “Refresh ATTOM Closed Sales (24 mo)” calls POST /api/attom/import/closed-sales.
+* “Refresh Parcels (beta)” calls POST /api/attom/import/parcels. Show counts and last run time.
+
+7) Error handling & rate limits
+* On any ATTOM error, log and continue (don’t crash the route).
+* Add simple retry (up to 2) on 429/5xx with exponential backoff (500ms, 1500ms).
+* Cache responses to files under data/attom/* so the app works offline/dev.
+
+8) Acceptance Criteria (demo)
+* .env has ATTOM_API_KEY and app refuses import without it (clear error).
+* Subject tab can pull a property by address and fill empty fields (with attribution).
+* Market tab loads ATTOM closed sales for Seminole/Orange/Volusia, computes monthly medians, and shows a %/month trend using your existing logic.
+* Comps tab can add ATTOM closed sales and shows time-adjusted price + source badge.
+* Admin → Data panel can run imports; counts update; files land under data/attom/*.
+* All ATTOM files persist in repo data folder and are read by the app without hitting the API every page load.
+
+9) Manual Test Script (copy/paste)
+1. Set key: put your ATTOM key into .env → restart dev server.
+2. Import closed sales:
+curl -sS -X POST http://localhost:3000/api/attom/import/closed-sales | jq
+ls -al data/attom/closed_sales
+1. Subject lookup:
+curl -sS "http://localhost:3000/api/attom/subject/lookup" \
+  -H "content-type: application/json" -d '{"addressLine1":"123 Main St","city":"Sanford","state":"FL","zip":"32771"}' -X POST
+1. In the app:
+    * Subject: click “Lookup from ATTOM” → fields populate.
+    * Market: Source = ATTOM → compute trend; “Use this time adjustment”.
+    * Comps: Add ATTOM closed sale → see time-adjust line, effective date pill.
+2. Kill internet → reload app → ATTOM data still shows from data/attom/* (cached).
+
+10) Notes & guardrails
+* Keep your key in env, never in code or client.
+* ATTOM sometimes lags recording dates; that’s fine for closed sales and market trend.
+* When MLS Grid arrives, keep ATTOM for tax/parcel and for extra closed sales; MLS will provide actives/pending + photos.
+
