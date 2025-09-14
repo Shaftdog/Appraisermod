@@ -1,0 +1,285 @@
+PROJECT TITLE
+HABU Module (Highest & Best Use) — HABU tab + routes + four‑tests engine + narrative + QC + integrations (no changes to secured Photo API)
+
+Architecture fit
+
+Server: Express/TS (add routes under server/routes.ts and helpers in server/storage.ts).
+
+Client: React/Vite/TS (new page client/src/pages/orders/[orderId]/habu.tsx + components).
+
+Shared: Pure functions in shared/habu.ts (types + scoring + narrative).
+
+Persistence: JSON under /data/orders/<id>/habu/.
+
+0) Types
+
+shared/habu.ts
+
+export type UseCategory =
+  | 'singleFamily' | 'multiFamily' | 'townhome' | 'condo'
+  | 'office' | 'retail' | 'industrial' | 'mixedUse'
+  | 'ag' | 'specialPurpose' | 'vacantResidential' | 'vacantCommercial';
+
+export interface ZoningData {
+  source: 'manual' | 'provider' | 'countyGIS';
+  code?: string;                 // e.g., R-1
+  description?: string;
+  allowedUses: UseCategory[];    // normalized uses
+  minLotSizeSqft?: number;
+  maxDensityDUA?: number;        // dwelling units per acre
+  maxHeightFt?: number;
+  setbacks?: { front?: number; side?: number; rear?: number };
+  notes?: string;
+  fetchedAt?: string;
+  providerRef?: string;          // e.g., 'attom:<id>' in future
+}
+
+export interface HabuInputs {
+  asOfDateISO: string;
+  asIfVacant: boolean;           // toggle view
+  subject: {
+    siteAreaSqft?: number;
+    topography?: 'level'|'sloped'|'irregular';
+    utilities?: { water: boolean; sewer: boolean; electric: boolean; gas?: boolean };
+    access?: 'arterial'|'collector'|'local'|'easement';
+    exposure?: 'corner'|'interior'|'flag';
+    gla?: number;                // for as-improved
+    yearBuilt?: number;
+    condition?: 1|2|3|4|5;      // ordinal similar to your comps
+    quality?: 1|2|3|4|5;
+    parking?: number;            // spaces/garage bays
+  };
+  zoning: ZoningData;
+  marketSignals: {
+    trendPctPerMonth?: number;     // from MCR
+    monthsOfInventory?: number;    // from MCR
+    spToLpMedian?: number;         // from MCR
+    domMedian?: number;            // from MCR
+  };
+  costSignals?: {
+    replacementCostUsdPerSf?: number;  // from Cost approach or manual
+    externalObsolPct?: number;         // optional
+    physicalDepreciationPct?: number;  // from Cost approach
+  };
+  candidateUses: UseCategory[];        // prefilled from zoning.allowedUses; editable
+}
+
+export interface HabuTestScore {
+  label: 'Physically Possible' | 'Legally Permissible' | 'Financially Feasible' | 'Maximally Productive';
+  score: number;                 // 0..1
+  rationale: string;             // human text
+  evidence: string[];            // bullet points; data keys used
+}
+
+export interface UseEvaluation {
+  use: UseCategory;
+  tests: HabuTestScore[];
+  composite: number;             // weighted avg of tests
+  flags: Array<'zoningConflict'|'utilityConstraint'|'siteConstraint'|'marketWeak'|'costUnfavorable'>;
+}
+
+export interface HabuResult {
+  asIfVacantConclusion: { use: UseCategory; composite: number; confidence: number; narrative: string };
+  asImprovedConclusion?: { use: UseCategory; composite: number; confidence: number; narrative: string };
+  rankedUses: UseEvaluation[];
+  weights: { physical: number; legal: number; financial: number; productive: number }; // normalized
+  version: string;               // '2025.09.1'
+  generatedAt: string;
+  author?: string;               // user display
+}
+
+export interface HabuState {
+  orderId: string;
+  inputs: HabuInputs;
+  result?: HabuResult;
+  reviewerNotes?: string;
+  appraiserNotes?: string;
+  updatedAt: string;
+}
+
+
+Add pure helpers in the same file:
+
+scorePhysicallyPossible(inputs, use)
+
+scoreLegallyPermissible(inputs, use)
+
+scoreFinanciallyFeasible(inputs, use) (simple residual/ratio heuristics; see below)
+
+scoreMaxProductive(evals[]) (rank‑based)
+
+generateNarrative(state)
+
+1) Server routes (Express)
+
+Add to server/routes.ts
+
+// Base dir: /data/orders/:id/habu/
+GET    /api/orders/:id/habu                -> storage.getHabuState(id)
+PUT    /api/orders/:id/habu/inputs         -> storage.saveHabuInputs(id, inputs)
+POST   /api/orders/:id/habu/compute        -> storage.computeHabu(id) // runs four tests + narrative
+PUT    /api/orders/:id/habu/notes          -> storage.updateHabuNotes(id, { reviewerNotes?, appraiserNotes? })
+POST   /api/orders/:id/habu/zoning/fetch   -> storage.fetchZoningStub(id) // stubbed adapter now
+
+
+Add to server/storage.ts
+
+Read/write JSON to /data/orders/<id>/habu/state.json.
+
+computeHabu(id) calls the pure functions in shared/habu.ts, persists result.
+
+Security
+
+Same session/role checks as other order routes.
+
+Include audit events on compute/notes changes.
+
+2) Heuristic scoring (initial, transparent & editable)
+
+In shared/habu.ts, implement pragmatic, explainable heuristics:
+
+Physically Possible (0..1), based on site + utilities + access vs use:
+
+Penalty if siteAreaSqft < min needed for the use (e.g., SF min lot size).
+
+Penalty for topography='sloped' for dense residential/commercial; less for SF.
+
+Bonus if utilities.water && sewer && electric.
+
+Access: arterial/collector boost for commercial; local okay for SF.
+
+Legally Permissible:
+
+1.0 if use ∈ zoning.allowedUses; else 0.0 + flag zoningConflict.
+
+Apply density/height setbacks if supplied (simple pass/fail with small penalties).
+
+Financially Feasible (as‑if‑vacant or as‑improved):
+
+Pull trendPctPerMonth, MOI, SP/LP, DOM → a market composite 0..1.
+
+Simple residual check:
+
+If as‑if‑vacant: landValueEstimate (if available later) vs implied project value – cost.
+
+For now, approximate “feasibility” by:
+marketComposite * demandFactor(use) - costBurden(use)
+
+Derive demandFactor from MCR (MOI < 4 → good demand) and use class (e.g., retail lower in purely residential pockets).
+
+costBurden ~ normalized replacementCostUsdPerSf × external/physical obsolescence if as‑improved.
+
+Keep formulas visible and list inputs in evidence.
+
+Maximally Productive:
+
+For each use, combine:
+composite = wP*Phys + wL*Legal + wF*Fin + wM*Productive
+
+Rank uses; top gets Max Productive; compute a simple confidence from separation between ranks.
+
+Weights default: physical 0.25, legal 0.35, financial 0.30, productive 0.10 (editable in UI).
+
+Narrative: produce concise paragraph per conclusion, listing key tests & evidence.
+
+3) Client UI (new tab)
+
+Files
+
+client/src/pages/orders/[orderId]/habu.tsx
+
+client/src/components/habu/HabuInputsForm.tsx
+
+client/src/components/habu/HabuTestTable.tsx
+
+client/src/components/habu/HabuWeights.tsx
+
+client/src/components/habu/HabuNarrative.tsx
+
+client/src/components/habu/ZoningFetchPanel.tsx
+
+Layout
+
+Left column: Zoning panel (code, description, allowed uses, fetch button), Subject context (site area, utilities, access), As‑of Date, As‑If Vacant / As‑Improved toggle.
+
+Right column: Weights sliders; Compute HABU; Results:
+
+Ranked uses table with the 4 test scores, flags, composite.
+
+Conclusion cards (As‑If Vacant, As‑Improved) with confidence meters.
+
+Editable Narrative text area (pre‑filled) with character count.
+
+Toolbar: Save Inputs, Compute, Save Narrative, Sign‑off (uses existing pattern).
+
+QC chip for tab: Green if conclusion exists + no zoning conflict for chosen use; Yellow for missing data; Red if zoning not loaded or no feasible uses.
+
+UX details
+
+Sliders for weights with normalized sum = 1.
+
+Tooltips that show the math for each test on hover.
+
+“Export snippet” button to copy the HABU narrative into the final report text.
+
+4) Reviewer & Policy integration
+
+Seed rules (extend your existing policy pack):
+
+HABU vs Comps use: If primary comps’ use category conflicts with HABU conclusion → Major (requires rationale).
+
+HABU missing: If HABU tab has no conclusion → Major.
+
+Zoning mismatch: If conclusion’s use not in zoning.allowedUses → Major (unless overridden).
+
+As‑Improved deter: If as‑improved conclusion suggests alternate use with higher composite, require narrative.
+
+Reviewer UI: Policy hits will link to HABU tab; Overrides require reason.
+
+5) Delivery integration
+
+MISMO XML: Include HABU conclusion (use category textual label), as‑of date, brief narrative in <RECONCILIATION> or <APPRAISAL/CONCLUSIONS> section.
+
+Workfile ZIP: Save /habu/state.json and add to manifest.json with checksum.
+
+6) Acceptance criteria
+
+ HABU tab appears and persists inputs under /data/orders/<id>/habu/state.json.
+
+ Compute produces ranked uses with transparent four‑tests scoring; toggling weights updates composite.
+
+ As‑If Vacant and As‑Improved conclusions display with confidence and editable narrative.
+
+ QC chip: Red when zoning/inputs missing; Yellow when partial; Green when conclusion saved and aligned.
+
+ Reviewer policy flags HABU/comp use mismatches; override path works.
+
+ Delivery XML includes HABU; Workfile includes habu/state.json.
+
+7) Manual test script (2–3 minutes)
+
+Open /orders/123 → HABU tab.
+
+Click Fetch Zoning (stub fills code + allowed uses).
+
+Enter site area, utilities, access; toggle As‑If Vacant.
+
+Adjust weights (Legal 0.40, Financial 0.30, Physical 0.20, Productive 0.10).
+
+Compute HABU → see ranked uses; top is “singleFamily” (example) with confidence %.
+
+Edit narrative; Save Narrative; sign‑off tab (should be Green if no conflicts).
+
+Switch As‑Improved; recompute → see conclusion may differ; narrative updates.
+
+Reviewer Run Policy → if comps use ≠ HABU use, see a Yellow/Red hit.
+
+Deliver → MISMO XML contains HABU conclusion text; Workfile ZIP contains /habu/state.json.
+
+Why this approach
+
+Transparent & auditable: Everything is rule‑based and editable, with evidence lists and weights that mirror your slider UX elsewhere.
+
+Adapter‑ready: The zoning fetch route is a stub now; when ATTOM (or county GIS) is ready, you just swap the provider implementation.
+
+Tightly integrated: HABU informs Market (filtering), Comps (compatible uses), Adjustments (attribute relevance), Reconciliation (narrative), Delivery (XML), and Reviewer (policy).
