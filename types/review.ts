@@ -1,7 +1,7 @@
 export type Risk = 'green' | 'yellow' | 'red';
 
 export type RuleSeverity = 'info' | 'minor' | 'major' | 'critical';
-export type RuleScope = 'order' | 'tab' | 'comp' | 'photo' | 'market' | 'adjustments';
+export type RuleScope = 'order' | 'tab' | 'comp' | 'photo' | 'market' | 'adjustments' | 'habu';
 
 export interface PolicyRule {
   id: string;                    // 'TIME_BASIS_MISMATCH'

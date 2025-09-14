@@ -1,0 +1,255 @@
+{
+  "meta": {
+    "id": "habu-appraisal-standards",
+    "name": "HABU Appraisal Standards Policy",
+    "version": "2025.09.0",
+    "updatedAt": "2025-09-14T19:41:00Z",
+    "enabled": true
+  },
+  "rules": [
+    {
+      "id": "HABU_INPUTS_REQUIRED",
+      "name": "HABU Analysis Required",
+      "scope": "habu",
+      "severity": "critical",
+      "selector": "$.habu.inputs",
+      "operator": "exists",
+      "messageTemplate": "Highest and Best Use analysis is required for all appraisal orders.",
+      "autofix": {
+        "action": "set",
+        "path": "$.habu.inputs",
+        "value": {}
+      },
+      "links": ["https://policy.example.com/habu#requirements"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_FOUR_TESTS_COMPLETE",
+      "name": "Four Tests Analysis Complete",
+      "scope": "habu",
+      "severity": "critical",
+      "selector": "$.habu.result.evaluations",
+      "operator": "exists",
+      "messageTemplate": "All four tests (Physically Possible, Legally Permissible, Financially Feasible, Maximally Productive) must be completed.",
+      "links": ["https://policy.example.com/habu#four-tests"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_ZONING_VERIFICATION",
+      "name": "Zoning Information Required",
+      "scope": "habu",
+      "severity": "major",
+      "selector": "$.habu.inputs.zoning.allowedUses",
+      "operator": "exists",
+      "messageTemplate": "Zoning information and allowed uses must be verified for legal permissibility analysis.",
+      "autofix": {
+        "action": "recompute",
+        "path": "$.habu.inputs.zoning"
+      },
+      "links": ["https://policy.example.com/habu#zoning"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_CANDIDATE_USES_MINIMUM",
+      "name": "Minimum Candidate Uses",
+      "scope": "habu",
+      "severity": "major",
+      "selector": "$.habu.inputs.candidateUses.length",
+      "operator": "lt",
+      "value": 2,
+      "messageTemplate": "At least two candidate uses must be analyzed for proper HABU comparison. Current count: {actual}.",
+      "links": ["https://policy.example.com/habu#candidate-uses"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_SITE_AREA_REQUIRED",
+      "name": "Site Area Specification",
+      "scope": "habu",
+      "severity": "major",
+      "selector": "$.habu.inputs.subject.siteAreaSqft",
+      "operator": "exists",
+      "messageTemplate": "Site area in square feet is required for physical possibility analysis.",
+      "links": ["https://policy.example.com/habu#site-characteristics"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_UTILITIES_ASSESSMENT",
+      "name": "Utilities Assessment Required",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.inputs.subject.utilities",
+      "operator": "exists",
+      "messageTemplate": "Utility availability (water, sewer, electric, gas) must be assessed for development feasibility.",
+      "links": ["https://policy.example.com/habu#utilities"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_MARKET_SIGNALS_REQUIRED",
+      "name": "Market Signals Required",
+      "scope": "habu",
+      "severity": "major",
+      "selector": "$.habu.inputs.marketSignals",
+      "operator": "exists",
+      "messageTemplate": "Market signals are required for financial feasibility analysis.",
+      "autofix": {
+        "action": "set",
+        "path": "$.habu.inputs.marketSignals",
+        "value": {}
+      },
+      "links": ["https://policy.example.com/habu#market-analysis"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_ZONING_CONFLICT_CHECK",
+      "name": "Zoning Conflict Validation",
+      "scope": "habu",
+      "severity": "critical",
+      "selector": "$.habu.result.evaluations[*].flags",
+      "operator": "in",
+      "value": ["zoningConflict"],
+      "messageTemplate": "Zoning conflicts detected in HABU analysis. All candidate uses must be legally permissible.",
+      "links": ["https://policy.example.com/habu#zoning-compliance"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_CONFIDENCE_THRESHOLD",
+      "name": "HABU Conclusion Confidence",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.result.asIfVacantConclusion.confidence",
+      "operator": "lt",
+      "value": 0.7,
+      "messageTemplate": "HABU conclusion confidence is {actual}. Consider strengthening analysis if below 70%.",
+      "links": ["https://policy.example.com/habu#confidence"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_WEIGHTS_BALANCE",
+      "name": "Test Weights Balance",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.inputs.weights.legal",
+      "operator": "lt",
+      "value": 0.25,
+      "messageTemplate": "Legal test weight is {actual}. Consider increasing emphasis on legal permissibility (recommend ≥25%).",
+      "links": ["https://policy.example.com/habu#test-weights"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_NARRATIVE_REQUIRED",
+      "name": "HABU Narrative Documentation",
+      "scope": "habu",
+      "severity": "major",
+      "selector": "$.habu.result.asIfVacantConclusion.narrative",
+      "operator": "exists",
+      "messageTemplate": "HABU conclusion must include narrative explanation supporting the highest and best use determination.",
+      "links": ["https://policy.example.com/habu#narrative"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_AS_IMPROVED_CONSISTENCY",
+      "name": "As-Improved Analysis Consistency",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.inputs.asIfVacant",
+      "operator": "eq",
+      "value": false,
+      "messageTemplate": "When analyzing as-improved, ensure building characteristics (GLA, year built, condition) are provided.",
+      "links": ["https://policy.example.com/habu#as-improved"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_PHYSICAL_CONSTRAINTS",
+      "name": "Physical Constraints Documentation",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.result.evaluations[*].flags",
+      "operator": "in",
+      "value": ["siteConstraint"],
+      "messageTemplate": "Physical site constraints identified. Ensure thorough documentation of topography, access, and development limitations.",
+      "links": ["https://policy.example.com/habu#physical-constraints"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_FINANCIAL_FEASIBILITY_DATA",
+      "name": "Financial Feasibility Data Quality",
+      "scope": "habu",
+      "severity": "major",
+      "selector": "$.habu.inputs.marketSignals.monthsOfInventory",
+      "operator": "exists",
+      "messageTemplate": "Market inventory data is required for accurate financial feasibility assessment.",
+      "links": ["https://policy.example.com/habu#market-data"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_MAXIMALLY_PRODUCTIVE_RANKING",
+      "name": "Maximally Productive Test Ranking",
+      "scope": "habu",
+      "severity": "critical",
+      "selector": "$.habu.result.evaluations[0].composite",
+      "operator": "lt",
+      "value": 0.5,
+      "messageTemplate": "Highest ranked use has composite score of {actual}. Verify analysis methodology if top use scores below 50%.",
+      "links": ["https://policy.example.com/habu#ranking"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_VERSION_TRACKING",
+      "name": "HABU Analysis Version Control",
+      "scope": "habu",
+      "severity": "info",
+      "selector": "$.habu.result.version",
+      "operator": "exists",
+      "messageTemplate": "HABU analysis should be version tracked for audit purposes.",
+      "autofix": {
+        "action": "set",
+        "path": "$.habu.result.version",
+        "value": "1.0"
+      },
+      "links": ["https://policy.example.com/habu#versioning"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_EFFECTIVE_DATE_CURRENT",
+      "name": "HABU Analysis Currency",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.inputs.asOfDateISO",
+      "operator": "lt",
+      "value": "30_days_ago",
+      "messageTemplate": "HABU analysis date is {actual}. Ensure analysis reflects current market conditions.",
+      "links": ["https://policy.example.com/habu#currency"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_SUPPORTABLE_CONCLUSION",
+      "name": "Supportable HABU Conclusion",
+      "scope": "habu",
+      "severity": "critical",
+      "selector": "$.habu.result.evaluations[0].tests[*].score",
+      "operator": "lt",
+      "value": 0.6,
+      "messageTemplate": "Highest ranked use must score ≥60% on all four tests. Review analysis for use with failing test scores.",
+      "links": ["https://policy.example.com/habu#supportability"],
+      "enabled": true
+    },
+    {
+      "id": "HABU_ALTERNATIVE_USES_CONSIDERED",
+      "name": "Alternative Uses Consideration",
+      "scope": "habu",
+      "severity": "minor",
+      "selector": "$.habu.inputs.candidateUses.length",
+      "operator": "lt",
+      "value": 3,
+      "messageTemplate": "Consider analyzing additional alternative uses for comprehensive HABU study. Current: {actual} uses.",
+      "links": ["https://policy.example.com/habu#alternatives"],
+      "enabled": true
+    }
+  ],
+  "riskMap": {
+    "critical": "red",
+    "major": "red", 
+    "minor": "yellow",
+    "info": "green"
+  }
+}
