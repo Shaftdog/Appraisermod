@@ -19,11 +19,13 @@ import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock, Calendar } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock, Calendar, Database, MapPin } from 'lucide-react';
 import { MarketSettings, MarketRecord, McrMetrics, TimeAdjustments } from '@shared/schema';
 import { computeMonthlyMedians, computeMarketMetrics } from '@/lib/market/stats';
+import type { ClosedSale } from '@shared/attom';
 
 export default function Market() {
   const params = useParams<{ orderId: string }>();
@@ -31,6 +33,13 @@ export default function Market() {
   const [showVersions, setShowVersions] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'mcr' | 'records' | 'adjustments'>('overview');
   const [currentSettings, setCurrentSettings] = useState<Partial<MarketSettings>>({});
+  const [useAttomData, setUseAttomData] = useState(false);
+  const [attomImportSettings, setAttomImportSettings] = useState({
+    radiusMiles: 1.0,
+    monthsBack: 12,
+    minSalePrice: 100000,
+    maxSalePrice: 2000000
+  });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -53,6 +62,12 @@ export default function Market() {
   const { data: timeAdjustments, isLoading: adjustmentsLoading, isError: adjustmentsError, error: adjustmentsErrorDetails } = useQuery<TimeAdjustments>({
     queryKey: ['/api/orders', orderId, 'market', 'time-adjustments'],
     enabled: !!orderId
+  });
+
+  // ATTOM closed sales query
+  const { data: attomClosedSales, isLoading: attomLoading, isError: attomError, error: attomErrorDetails } = useQuery<ClosedSale[]>({
+    queryKey: ['/api/orders', orderId, 'attom', 'closed-sales'],
+    enabled: !!orderId && useAttomData
   });
 
   // MCR computation state
@@ -107,7 +122,10 @@ export default function Market() {
   // Compute MCR mutation
   const computeMcrMutation = useMutation({
     mutationFn: async (settings?: Partial<MarketSettings>) => {
-      const response = await apiRequest('POST', `/api/orders/${orderId}/market/mcr/compute`, { settings });
+      const response = await apiRequest('POST', `/api/orders/${orderId}/market/mcr/compute`, { 
+        settings,
+        source: useAttomData ? 'attom' : 'local'
+      });
       return response.json();
     },
     onSuccess: (data: McrMetrics) => {
@@ -173,6 +191,36 @@ export default function Market() {
     onError: (error) => {
       toast({
         title: "Save failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  // ATTOM closed sales import mutation
+  const importAttomSalesMutation = useMutation({
+    mutationFn: async () => {
+      if (!order?.tabs.subject?.data.address) {
+        throw new Error('Subject property address is required for ATTOM import');
+      }
+      
+      const response = await apiRequest('POST', '/api/attom/closed-sales/import', {
+        orderId,
+        subjectAddress: order.tabs.subject.data.address,
+        settings: attomImportSettings
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/orders', orderId, 'attom', 'closed-sales'] });
+      toast({
+        title: "ATTOM import successful",
+        description: `Imported ${data.count} closed sales from ATTOM Data Solutions.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "ATTOM import failed",
         description: error.message,
         variant: "destructive",
       });
@@ -253,9 +301,20 @@ export default function Market() {
     );
   }
 
-  // Compute chart data from market records
-  const chartData = marketRecords ? computeMonthlyMedians(marketRecords, 'salePrice', 12) : [];
-  const ppsfData = marketRecords ? computeMonthlyMedians(marketRecords, 'ppsf', 12) : [];
+  // Compute chart data from selected data source
+  const selectedDataSource = useAttomData && attomClosedSales ? 
+    attomClosedSales.map(sale => ({
+      status: 'sold' as const,
+      closeDate: sale.closeDate,
+      salePrice: sale.closePrice,
+      ppsf: sale.gla ? sale.closePrice / sale.gla : undefined,
+      listDate: sale.closeDate, // Use close date as fallback
+      dom: 0, // Not available in ATTOM data
+      spToLp: 1.0 // Assume 100% for closed sales
+    })) : marketRecords;
+  
+  const chartData = selectedDataSource ? computeMonthlyMedians(selectedDataSource, 'salePrice', 12) : [];
+  const ppsfData = selectedDataSource ? computeMonthlyMedians(selectedDataSource, 'ppsf', 12) : [];
 
   // Tab navigation items
   const tabItems = [
@@ -445,7 +504,7 @@ export default function Market() {
                     </Button>
                     <Button
                       onClick={() => computeMcrMutation.mutate({...marketSettings, ...currentSettings})}
-                      disabled={computeMcrMutation.isPending || !marketRecords?.length}
+                      disabled={computeMcrMutation.isPending || (!useAttomData && !marketRecords?.length) || (useAttomData && (!attomClosedSales?.length || attomLoading))}
                       size="sm"
                       data-testid="button-compute-mcr"
                     >
@@ -453,6 +512,143 @@ export default function Market() {
                       Compute MCR
                     </Button>
                   </div>
+                </div>
+
+                {/* Data Source Toggle */}
+                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border-l-4 border-blue-500">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h4 className="text-sm font-medium text-foreground">Data Source</h4>
+                      <p className="text-xs text-muted-foreground">Choose between local market records or ATTOM closed sales data</p>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <Label htmlFor="attom-data-toggle" className="text-sm font-medium">
+                        <Database className="h-4 w-4 inline mr-1" />
+                        Use ATTOM Data
+                      </Label>
+                      <Switch
+                        id="attom-data-toggle"
+                        checked={useAttomData}
+                        onCheckedChange={setUseAttomData}
+                        data-testid="switch-attom-data"
+                      />
+                    </div>
+                  </div>
+
+                  {useAttomData && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="radius-miles" className="text-sm font-medium">
+                            Search Radius (miles)
+                          </Label>
+                          <Input
+                            id="radius-miles"
+                            type="number"
+                            step="0.1"
+                            min="0.1"
+                            max="5.0"
+                            value={attomImportSettings.radiusMiles}
+                            onChange={(e) => setAttomImportSettings(prev => ({...prev, radiusMiles: parseFloat(e.target.value)}))}
+                            data-testid="input-radius-miles"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="months-back-attom" className="text-sm font-medium">
+                            Months Back
+                          </Label>
+                          <Select
+                            value={String(attomImportSettings.monthsBack)}
+                            onValueChange={(value) => setAttomImportSettings(prev => ({...prev, monthsBack: Number(value)}))}
+                          >
+                            <SelectTrigger data-testid="select-months-back-attom">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="6">6 months</SelectItem>
+                              <SelectItem value="12">12 months</SelectItem>
+                              <SelectItem value="18">18 months</SelectItem>
+                              <SelectItem value="24">24 months</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="min-sale-price" className="text-sm font-medium">
+                            Min Sale Price
+                          </Label>
+                          <Input
+                            id="min-sale-price"
+                            type="number"
+                            step="10000"
+                            value={attomImportSettings.minSalePrice}
+                            onChange={(e) => setAttomImportSettings(prev => ({...prev, minSalePrice: Number(e.target.value)}))}
+                            data-testid="input-min-sale-price"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="max-sale-price" className="text-sm font-medium">
+                            Max Sale Price
+                          </Label>
+                          <Input
+                            id="max-sale-price"
+                            type="number"
+                            step="10000"
+                            value={attomImportSettings.maxSalePrice}
+                            onChange={(e) => setAttomImportSettings(prev => ({...prev, maxSalePrice: Number(e.target.value)}))}
+                            data-testid="input-max-sale-price"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        <Button
+                          onClick={() => importAttomSalesMutation.mutate()}
+                          disabled={importAttomSalesMutation.isPending}
+                          variant="outline"
+                          size="sm"
+                          data-testid="button-import-attom"
+                        >
+                          <MapPin className={`h-4 w-4 ${importAttomSalesMutation.isPending ? 'animate-spin' : ''}`} />
+                          {importAttomSalesMutation.isPending ? 'Importing...' : 'Import ATTOM Sales'}
+                        </Button>
+                        {attomClosedSales && (
+                          <Badge variant="secondary" className="text-xs">
+                            {attomClosedSales.length} ATTOM sales loaded
+                          </Badge>
+                        )}
+                      </div>
+
+                      {attomClosedSales && attomClosedSales.length > 0 && (
+                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                          <div className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200">
+                            <MapPin className="h-4 w-4" />
+                            <span className="font-medium">ATTOM Data Active:</span>
+                            <span>{attomClosedSales.length} closed sales within {attomImportSettings.radiusMiles} miles</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* ATTOM Loading and Error States */}
+                  {useAttomData && attomLoading && (
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                      <div className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200">
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>Loading ATTOM closed sales data...</span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {useAttomData && attomError && (
+                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                      <div className="flex items-center gap-2 text-sm text-red-800 dark:text-red-200">
+                        <MapPin className="h-4 w-4" />
+                        <span className="font-medium">ATTOM Data Error:</span>
+                        <span>{attomErrorDetails?.message || 'Failed to load ATTOM data'}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 
                 {/* Analysis Settings */}

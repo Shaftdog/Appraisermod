@@ -1540,6 +1540,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied to this order' });
       }
       
+      // Validate source parameter
+      const source = req.body.source as 'local' | 'attom' | undefined;
+      if (source && !['local', 'attom'].includes(source)) {
+        return res.status(400).json({ 
+          message: "Invalid source parameter. Must be 'local' or 'attom'"
+        });
+      }
+      
       // Validate settings if provided
       let validatedSettings = undefined;
       if (req.body.settings) {
@@ -1553,7 +1561,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validatedSettings = validationResult.data;
       }
       
-      const metrics = await storage.computeMcrMetrics(orderId, validatedSettings);
+      const metrics = await storage.computeMcrMetrics(orderId, validatedSettings, source);
       res.json(metrics);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
@@ -2520,6 +2528,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { importClosedSales, importParcels, importSubjectByAddress } = await import('./attom/importer');
   
   // ATTOM Import Routes
+  
+  // Order-specific ATTOM closed sales import (client-called endpoint)
+  app.post("/api/attom/closed-sales/import", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { orderId, subjectAddress, settings } = req.body;
+      
+      if (!orderId || !subjectAddress) {
+        return res.status(400).json({ message: 'orderId and subjectAddress are required' });
+      }
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      if (!process.env.ATTOM_API_KEY) {
+        return res.status(500).json({ message: 'ATTOM_API_KEY not configured' });
+      }
+      
+      // Import closed sales around the subject property
+      const result = await storage.importAttomClosedSalesForOrder(orderId, subjectAddress, settings);
+      res.json(result);
+    } catch (error) {
+      console.error('ATTOM closed sales import error:', error);
+      res.status(500).json({ message: error.message || 'Failed to import ATTOM closed sales' });
+    }
+  });
+  
+  // Bulk ATTOM import by county
   app.post("/api/attom/import/closed-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const user = req.user!;
@@ -2608,6 +2645,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error looking up subject:", error);
       res.status(500).json({ message: error.message || "Failed to lookup subject property" });
+    }
+  });
+
+  // Order-specific ATTOM Closed Sales Data
+  app.get("/api/orders/:id/attom/closed-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: 'Invalid order ID' });
+      }
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Check if order-specific ATTOM data exists
+      const orderAttomPath = path.join(process.cwd(), 'data/orders', orderId, 'attom/closed-sales.json');
+      
+      try {
+        const data = await fs.readFile(orderAttomPath, 'utf8');
+        const sales = JSON.parse(data);
+        res.json(sales);
+      } catch (fileError) {
+        // No order-specific data found - return empty array
+        res.json([]);
+      }
+    } catch (error: any) {
+      console.error("Error serving order ATTOM data:", error);
+      res.status(500).json({ message: error.message || "Failed to load order ATTOM data" });
     }
   });
 

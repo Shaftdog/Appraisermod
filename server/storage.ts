@@ -71,7 +71,8 @@ export interface IStorage {
   updateMarketSettings(orderId: string, settings: Partial<MarketSettings>): Promise<MarketSettings>;
   getMarketRecords(orderId: string): Promise<MarketRecord[]>;
   seedMarketRecords(orderId: string): Promise<MarketRecord[]>;
-  computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>): Promise<McrMetrics>;
+  computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>, source?: 'local' | 'attom'): Promise<McrMetrics>;
+  importAttomClosedSalesForOrder(orderId: string, subjectAddress: any, settings?: any): Promise<{ count: number; filePath: string }>;
   getTimeAdjustments(orderId: string): Promise<TimeAdjustments>;
   updateTimeAdjustments(orderId: string, adjustments: Partial<TimeAdjustments>): Promise<TimeAdjustments>;
 
@@ -1121,12 +1122,18 @@ export class DatabaseStorage implements IStorage {
     return records;
   }
 
-  async computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>): Promise<McrMetrics> {
+  async computeMcrMetrics(orderId: string, settingsOverride?: Partial<MarketSettings>, source?: 'local' | 'attom'): Promise<McrMetrics> {
     const settings = settingsOverride 
       ? { ...await this.getMarketSettings(orderId), ...settingsOverride }
       : await this.getMarketSettings(orderId);
     
-    const records = await this.getMarketRecords(orderId);
+    // Load data based on source parameter
+    let records: MarketRecord[];
+    if (source === 'attom') {
+      records = await this.getAttomClosedSalesAsMarketRecords(orderId);
+    } else {
+      records = await this.getMarketRecords(orderId);
+    }
     
     // Filter records by polygon if enabled
     let filteredRecords = records;
@@ -1151,12 +1158,102 @@ export class DatabaseStorage implements IStorage {
       minSalesPerMonth: settings.minSalesPerMonth
     });
     
-    // Cache the computed metrics
+    // Cache the computed metrics with source annotation
     this.ensureMarketDataDir(orderId);
     const metricsPath = path.join(this.getMarketDataPath(orderId), 'mcr.json');
-    fs.writeFileSync(metricsPath, JSON.stringify(metrics, null, 2));
+    const metricsWithSource = { ...metrics, dataSource: source || 'local' };
+    fs.writeFileSync(metricsPath, JSON.stringify(metricsWithSource, null, 2));
     
     return metrics;
+  }
+
+  private async getAttomClosedSalesAsMarketRecords(orderId: string): Promise<MarketRecord[]> {
+    const attomDir = path.join(process.cwd(), 'data/orders', orderId, 'attom');
+    const attomPath = path.join(attomDir, 'closed-sales.json');
+    
+    try {
+      if (fs.existsSync(attomPath)) {
+        const attomData = JSON.parse(fs.readFileSync(attomPath, 'utf-8'));
+        
+        // Convert ATTOM ClosedSale[] to MarketRecord[]
+        const marketRecords: MarketRecord[] = attomData.map((sale: any, index: number) => ({
+          id: `attom-${index + 1}`,
+          status: 'sold' as const,
+          address: sale.address,
+          listDate: sale.closeDate, // Use close date as list date for sold properties
+          closeDate: sale.closeDate,
+          salePrice: sale.closePrice,
+          ppsf: sale.gla ? sale.closePrice / sale.gla : undefined,
+          dom: 30, // Estimated DOM since ATTOM doesn't provide this
+          spToLp: 1.0, // Assume sold at list price since we don't have list price
+          latitude: sale.lat,
+          longitude: sale.lon,
+          sqft: sale.gla,
+          lotSizeSqft: sale.lotSizeSqft,
+          yearBuilt: undefined, // Not provided in ATTOM data structure
+          bedrooms: undefined,
+          bathrooms: undefined
+        }));
+        
+        return marketRecords;
+      }
+    } catch (error) {
+      console.log('Error reading ATTOM closed sales:', error);
+    }
+    
+    throw new Error('No ATTOM closed sales data found. Please import ATTOM data first.');
+  }
+
+  async importAttomClosedSalesForOrder(orderId: string, subjectAddress: any, settings?: any): Promise<{ count: number; filePath: string }> {
+    // Import the ATTOM importer functions dynamically
+    const { importClosedSales } = await import('./attom/importer');
+    
+    if (!process.env.ATTOM_API_KEY) {
+      throw new Error('ATTOM_API_KEY not configured');
+    }
+    
+    // Extract county from subject address for import
+    // This is a simplified version - in production, you'd need proper address parsing
+    const county = 'Orange'; // Default to Orange County, FL for demo
+    const monthsBack = settings?.monthsBack || 12;
+    
+    try {
+      // Import ATTOM closed sales data for the county
+      const result = await importClosedSales(county, monthsBack);
+      
+      // Create order-specific ATTOM directory and copy/filter data
+      const orderAttomDir = path.join(process.cwd(), 'data/orders', orderId, 'attom');
+      fs.mkdirSync(orderAttomDir, { recursive: true });
+      
+      // Read the imported county data
+      const countyDataPath = result.file;
+      const countyData = JSON.parse(fs.readFileSync(countyDataPath, 'utf-8'));
+      
+      // Filter data within radius of subject (simplified - use all data for now)
+      const radiusMiles = settings?.radiusMiles || 1.0;
+      let filteredSales = countyData;
+      
+      // Apply price filters if provided
+      if (settings?.minSalePrice) {
+        filteredSales = filteredSales.filter((sale: any) => sale.closePrice >= settings.minSalePrice);
+      }
+      if (settings?.maxSalePrice) {
+        filteredSales = filteredSales.filter((sale: any) => sale.closePrice <= settings.maxSalePrice);
+      }
+      
+      // Save order-specific ATTOM data
+      const orderAttomPath = path.join(orderAttomDir, 'closed-sales.json');
+      fs.writeFileSync(orderAttomPath, JSON.stringify(filteredSales, null, 2));
+      
+      return {
+        count: filteredSales.length,
+        filePath: orderAttomPath
+      };
+      
+    } catch (error) {
+      console.error('ATTOM import error:', error);
+      throw new Error(`Failed to import ATTOM data: ${error.message}`);
+    }
   }
 
   async getTimeAdjustments(orderId: string): Promise<TimeAdjustments> {
