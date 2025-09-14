@@ -1,0 +1,224 @@
+PROJECT TITLE
+Delivery & Exports: MISMO 2.6 UAD XML + Workfile ZIP (no Photo API changes)
+
+SCOPE RULES (IMPORTANT)
+	•	Do NOT modify secured Photo endpoints.
+	•	Add new mock routes under app/api/orders/[id]/delivery/*, persisting to /data/orders/<id>/delivery/*.
+	•	Generate MISMO XML and ZIP server-side (Next.js route handlers) from existing JSON artifacts and PDFs.
+	•	Keep all endpoint paths and headers centralized in config.
+
+⸻
+
+0) Types
+
+types/delivery.ts
+
+export interface ClientProfile {
+  id: string;
+  name: string;
+  channel: 'download'|'sftp'|'email';   // implement download now; stub others
+  email?: string;
+  sftp?: { host: string; path: string; user: string }; // stub only
+  requiresUAD: boolean;                 // if true → MISMO UAD validation
+  watermark?: 'CONFIDENTIAL'|'DRAFT'|null;
+}
+
+export interface MismoExportMeta {
+  orderId: string;
+  version: '2.6';
+  generatedAt: string;
+  path: string;         // file path for XML
+  warnings: string[];   // non-fatal notes (e.g., missing APN)
+  errors: string[];     // fatal blocks (XML not emitted if present)
+}
+
+export interface WorkfileBundleMeta {
+  orderId: string;
+  generatedAt: string;
+  zipPath: string;
+  manifestPath: string;
+  sha256: string;       // checksum of ZIP
+  items: Array<{ path: string; sha256: string; bytes: number; kind: string }>;
+}
+
+export interface DeliveryRequest {
+  clientProfileId: string;
+  includeWorkfile: boolean;
+  includeMismo: boolean;
+  finalize: boolean;     // mark delivered in ledger
+}
+
+export interface DeliveryRecord {
+  orderId: string;
+  request: DeliveryRequest;
+  mismo?: MismoExportMeta;
+  workfile?: WorkfileBundleMeta;
+  deliveredAt?: string;
+  status: 'success'|'warning'|'failed';
+  messages: string[];
+}
+
+
+⸻
+
+1) Config
+
+config/endpointPaths.ts (extend)
+
+export const DeliveryAPI = {
+  profiles: () => `/api/delivery/clients`,
+  request: (orderId: string) => `/api/orders/${orderId}/delivery/request`,
+  status:  (orderId: string) => `/api/orders/${orderId}/delivery/status`,
+  download: (orderId: string, file: string) => `/api/orders/${orderId}/delivery/download?file=${encodeURIComponent(file)}`
+};
+
+Seed client profiles at /data/delivery/clients.json with 1–2 sample clients:
+
+[
+  {"id":"shop-default","name":"Default Client","channel":"download","requiresUAD":true,"watermark":null},
+  {"id":"draft-internal","name":"Internal Review","channel":"download","requiresUAD":false,"watermark":"DRAFT"}
+]
+
+
+⸻
+
+2) Mock API Routes
+
+Create under app/api/delivery/ and app/api/orders/[id]/delivery/:
+	1.	Clients
+	•	GET /api/delivery/clients → list ClientProfile[].
+	2.	Request Delivery
+	•	POST /api/orders/:id/delivery/request with DeliveryRequest:
+	•	Steps:
+	1.	Gather artifacts from /data/orders/<id>/…:
+	•	PDF Addenda: /photos/addenda.pdf
+	•	Photos (blurred variants only): /photos/display/* or /photos/processed/*
+	•	Adjustments bundle: /adjustments/bundle.json
+	•	Time adjustments: /market/time-adjustments.json
+	•	Market MCR metrics: /market/mcr.json
+	•	Comps/subject JSON, review hits: /review/*.json
+	2.	MISMO (if includeMismo): build 2.6 UAD XML from current data (see Mapping below).
+	3.	Workfile (if includeWorkfile): bundle everything into /data/orders/<id>/delivery/workfile.zip with a manifest.json and sha256 checksums.
+	4.	Write a DeliveryRecord to /data/orders/<id>/delivery/record.json.
+	5.	Return { record, downloads: { xml?: path, zip?: path } }.
+	3.	Status
+	•	GET /api/orders/:id/delivery/status → last DeliveryRecord.
+	4.	Download
+	•	GET /api/orders/:id/delivery/download?file=... → streams the XML or ZIP with correct headers; prevent path traversal.
+
+Utilities
+	•	lib/crypto/sha256.ts — compute sha256 for manifest/zip.
+	•	lib/zip/makeZip.ts — basic folder->zip (use jszip server-side).
+	•	lib/mismo/buildUAD.ts — pure TS that maps order JSON → UAD 2.6 XML string.
+
+Install:
+
+npm i jszip fast-xml-parser
+
+
+⸻
+
+3) MISMO Mapping (UAD 2.6 – simplified, mock-accurate)
+
+Implement lib/mismo/buildUAD.ts:
+	•	Inputs: subject data, borrower/client metadata (from order), comps, time adjustment (rate, basis, effective date), adjustments bundle (per-attr lines), market metrics (trend %/mo, DOM, SP/LP), appraiser info (name, license), reviewer sign-off timestamps, effective date.
+	•	Output: XML string.
+	•	Structure (simplified but stable element names):
+	•	<MESSAGE> root with xmlns attrs
+	•	<PROPERTY>: address, APN, legal (if any), GLA, year built, site size
+	•	<TRANSACTION>: effective date, intended use/users, client
+	•	<APPRAISAL>:
+	•	<SUBJECT> block (char, photos note)
+	•	<COMPARABLES> with each comp: sale date/price, distance, GLA, line adjustments (roll up subtotal)
+	•	<MARKET_CONDITIONS>: trend/mo, MOI, DOM, SP/LP
+	•	<RECONCILIATION>: weighted indicated value, narrative
+	•	<SIGNATURES>: appraiser + reviewer (name, license #/role, timestamp)
+	•	Validation (mock): run a pre-flight:
+	•	Required fields: subject address, effective date, at least 3 comps with sale price/date & GLA, time adj basis/rate.
+	•	Gather warnings for missing optional fields; errors for required. If errors, skip XML save and return them in MismoExportMeta.errors.
+
+⸻
+
+4) Workfile ZIP
+
+Structure:
+
+workfile/
+  manifest.json
+  checksums.json
+  order.json                 (coalesced top-level order snapshot)
+  photos/
+    addenda.pdf
+    thumbnails/…             (optional)
+  market/
+    settings.json
+    mcr.json
+    time-adjustments.json
+  comps/
+    subject.json
+    comps.json
+    selection.json
+    adjustments/
+      bundle.json
+      run.json
+  review/
+    item.json
+    hits.json
+    threads.json
+  delivery/
+    mismo.xml                (if generated)
+
+	•	manifest.json lists every included file with byte size, sha256, and a friendly description.
+	•	checksums.json is a map <path>: <sha256>.
+	•	If client profile has watermark: 'DRAFT', include a manifest flag and add “DRAFT” to the PDF export screen (you already support watermarks—pass through if needed).
+
+⸻
+
+5) UI: Delivery Drawer
+
+components/delivery/DeliveryDrawer.tsx
+	•	Opens from Order header “Deliver” button.
+	•	Form:
+	•	Client: dropdown from GET /api/delivery/clients
+	•	Toggles: Include MISMO (UAD), Include Workfile ZIP
+	•	Read-only preview of warnings from a dry-run (call request endpoint with finalize:false).
+	•	Button: Generate & Mark Delivered → posts with finalize:true, shows download links for XML/ZIP.
+	•	After success, show Delivered on  to  in Order header.
+
+components/delivery/DeliveryBadges.tsx
+	•	Small badges in the Order list: “UAD XML”, “Workfile ZIP”, each linkable for download.
+
+⸻
+
+6) Acceptance Criteria
+	•	Client profiles load; user can pick a client.
+	•	Request Delivery produces:
+	•	MISMO 2.6 XML (when selected) unless fatal errors; warnings shown but do not block.
+	•	Workfile ZIP with manifest and checksums.
+	•	Download links work and are path-safe.
+	•	DeliveryRecord persisted at /data/orders/<id>/delivery/record.json with status + messages.
+	•	PDF addenda included; blurred photos only (or references) to avoid PII leakage.
+	•	Checksums (sha256) computed for every file, and for the final ZIP.
+	•	UI shows Delivered on … with quick links to XML/ZIP.
+
+⸻
+
+7) Manual Test Script (2–3 min)
+	1.	Open an order → click Deliver.
+	2.	Choose Default Client (UAD required), toggle Include MISMO + Include Workfile.
+	3.	Click Dry Run (or run with finalize:false) → see any warnings (e.g., missing APN).
+	4.	Click Generate & Mark Delivered → receive links to mismo.xml and workfile.zip.
+	5.	Download ZIP → open manifest.json and checksums.json; verify all paths and sizes.
+	6.	Open XML → confirm subject/comps/time adj/reconciliation present.
+	7.	Reopen order → header shows Delivered on…; badges appear with download links.
+
+⸻
+
+8) Nice-to-Have (if time)
+	•	Email/SFTP stubs that simply write a “sent” log.
+	•	A Validation Report PDF (one-pager) summarizing warnings/errors and key values (built with your pdf-lib).
+	•	Feature flag to include unblurred originals only for internal workfile (not client).
+
+⸻
+
+Deliver exactly this slice so you can hand clients a UAD/MISMO XML plus a defensible Workfile ZIP—one click from inside your Order UI.

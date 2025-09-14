@@ -1,0 +1,16 @@
+[
+  {
+    "id": "shop-default",
+    "name": "Default Client",
+    "channel": "download",
+    "requiresUAD": true,
+    "watermark": null
+  },
+  {
+    "id": "draft-internal",
+    "name": "Internal Review",
+    "channel": "download",
+    "requiresUAD": false,
+    "watermark": "DRAFT"
+  }
+]

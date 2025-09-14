@@ -1,5 +1,5 @@
 /**
- * Single source of truth for Photo API endpoint paths
+ * Single source of truth for API endpoint paths
  * Edit this file if your actual API endpoints differ from the defaults
  */
 
@@ -26,4 +26,11 @@ export const PhotoAPI = {
   
   // QC operations
   qcSummary: (orderId: string) => `/api/orders/${orderId}/photos/qc`,
+} as const;
+
+export const DeliveryAPI = {
+  profiles: () => `/api/delivery/clients`,
+  request: (orderId: string) => `/api/orders/${orderId}/delivery/request`,
+  status: (orderId: string) => `/api/orders/${orderId}/delivery/status`,
+  download: (orderId: string, file: string) => `/api/orders/${orderId}/delivery/download?file=${encodeURIComponent(file)}`
 } as const;
