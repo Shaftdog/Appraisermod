@@ -5,7 +5,7 @@ import { attomGet } from './client';
 import { stableSaleId } from './saleId';
 import { kpi } from '../../lib/telemetry';
 
-const DATA_ROOT = 'data/attom';
+const DATA_ROOT = process.env.ATTOM_DATA_ROOT || 'data/attom';
 
 function ensureDir(p: string) { return fs.mkdir(p, { recursive: true }); }
 
@@ -36,7 +36,11 @@ async function updateManifest(county: string, added: number, total: number) {
   kpi('attom_import_added', added, { county });
 }
 
-export async function importClosedSales(county: string, monthsBack = ATTOM.monthsBackClosedSales) {
+export async function importClosedSales(
+  county: string, 
+  monthsBack = ATTOM.monthsBackClosedSales,
+  testClient?: (endpoint: string, key: string, params: any) => Promise<any>
+) {
   const key = process.env.ATTOM_API_KEY!;
   if (!key) throw new Error('Missing ATTOM_API_KEY');
 
@@ -53,7 +57,8 @@ export async function importClosedSales(county: string, monthsBack = ATTOM.month
     let data: any;
     while (tries < 3) {
       try {
-        data = await attomGet('/propertyapi/v1.0.0/saleshistory/snapshot', key, {
+        const clientFn = testClient || attomGet;
+        data = await clientFn('/propertyapi/v1.0.0/saleshistory/snapshot', key, {
           countyname: county, state: 'FL', page, pagesize: 100, startdate: sinceIso
         });
         break;
