@@ -1,7 +1,7 @@
-import { type User, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
+import { type User, type PublicUser, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
 import { type HabuState, type HabuInputs, type HabuResult, type ZoningData } from "@shared/habu";
-import { type ReviewItem, type RuleHit, type ReviewQueueItem, type Thread, type Comment, type DiffSummary, type Risk } from "../../types/review";
-import { type PolicyPack } from "../../types/policy";
+import { type ReviewItem, type RuleHit, type ReviewQueueItem, type Thread, type Comment, type DiffSummary, type Risk } from "../types/review";
+import { type PolicyPack } from "../types/policy";
 import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, type CompAdjustmentLine, type AttrAdjustment, type CostBaseline, type DepreciationCurve, DEFAULT_ENGINE_SETTINGS, ATTR_METADATA } from "@shared/adjustments";
 import { users, orders, versions } from "@shared/schema";
 import { db } from "./db";
@@ -19,10 +19,10 @@ import { calculateTimeAdjustment } from "@shared/timeAdjust";
 import { computeUseEvaluation, scoreMaxProductive, generateNarrative, createDefaultWeights, normalizeWeights, USE_CATEGORY_LABELS } from "@shared/habu";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  authenticateUser(username: string, password: string): Promise<User | null>;
+  getUser(id: string): Promise<PublicUser | undefined>;
+  getUserByUsername(username: string): Promise<PublicUser | undefined>;
+  createUser(user: InsertUser): Promise<PublicUser>;
+  authenticateUser(username: string, password: string): Promise<PublicUser | null>;
   
   getOrder(id: string): Promise<OrderData | undefined>;
   createOrder(order: InsertOrder): Promise<OrderData>;
@@ -208,7 +208,7 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getUser(id: string): Promise<User | undefined> {
+  async getUser(id: string): Promise<PublicUser | undefined> {
     const [user] = await db.select({
       id: users.id,
       username: users.username,
@@ -221,7 +221,7 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
+  async getUserByUsername(username: string): Promise<PublicUser | undefined> {
     const [user] = await db.select({
       id: users.id,
       username: users.username,
@@ -234,7 +234,7 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createUser(insertUser: InsertUser): Promise<PublicUser> {
     // Hash the password before storing
     const hashedPassword = await bcrypt.hash(insertUser.password, 12);
     
@@ -257,7 +257,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async authenticateUser(username: string, password: string): Promise<User | null> {
+  async authenticateUser(username: string, password: string): Promise<PublicUser | null> {
     // Get user with password for verification
     const [userWithPassword] = await db.select().from(users).where(eq(users.username, username));
     console.log(`[AUTH] Looking for user: ${username}`);
@@ -710,7 +710,7 @@ export class DatabaseStorage implements IStorage {
     // Add polygon and selection data to each comp
     compsWithLocation = compsWithLocation.map(comp => ({
       ...comp,
-      isInsidePolygon: polygon ? isInsidePolygon(comp.latlng, polygon) : true,
+      isInsidePolygon: polygon ? isPointInPolygon(comp.latlng, polygon) : true,
       locked: selection.locked.includes(comp.id),
       isPrimary: selection.primary.includes(comp.id),
       primaryIndex: selection.primary.indexOf(comp.id) as 0 | 1 | 2 | -1
@@ -1519,7 +1519,7 @@ export class DatabaseStorage implements IStorage {
       
     } catch (error) {
       console.error('ATTOM import error:', error);
-      throw new Error(`Failed to import ATTOM data: ${error.message}`);
+      throw new Error(`Failed to import ATTOM data: ${(error as Error).message}`);
     }
   }
 
@@ -1803,14 +1803,14 @@ export class DatabaseStorage implements IStorage {
           // Check if time adjustment basis differs from market settings
           const timeAdjustments = await this.getTimeAdjustments(order.id);
           const marketSettings = await this.getMarketSettings(order.id);
-          violates = timeAdjustments.basis !== marketSettings.adjustmentBasis;
+          violates = timeAdjustments.basis !== marketSettings.metric;
           break;
         }
         case 'TIME_ADJ_MAGNITUDE': {
           // Check if time adjustment exceeds 1.5%/month
           const timeAdjustments = await this.getTimeAdjustments(order.id);
           const monthlyThreshold = 0.015; // 1.5%
-          violates = Math.abs(timeAdjustments.monthlyAdjustment || 0) > monthlyThreshold;
+          violates = Math.abs(timeAdjustments.legacy?.monthlyAdjustment || timeAdjustments.pctPerMonth || 0) > monthlyThreshold;
           break;
         }
         case 'COMP_OUTSIDE_POLYGON': {
@@ -1818,14 +1818,18 @@ export class DatabaseStorage implements IStorage {
           const polygon = await this.getMarketPolygon(order.id);
           const compSelection = await this.getCompSelection(order.id);
           if (polygon && compSelection.primary.length > 0) {
+            // Get actual comp objects from IDs
+            const { comps } = await this.getCompsWithScoring(order.id);
+            const primaryComps = comps.filter((comp: CompProperty) => compSelection.primary.includes(comp.id));
+            
             // Simple check: if any primary comp has invalid coordinates or is flagged
-            violates = compSelection.primary.some(comp => 
-              !comp.lat || !comp.lng || comp.lat === 0 || comp.lng === 0
+            violates = primaryComps.some((comp: CompProperty) => 
+              !comp.latlng || comp.latlng.lat === 0 || comp.latlng.lng === 0
             );
             if (violates) {
-              entities = compSelection.primary
-                .filter(comp => !comp.lat || !comp.lng || comp.lat === 0 || comp.lng === 0)
-                .map(comp => comp.id);
+              entities = primaryComps
+                .filter((comp: CompProperty) => !comp.latlng || comp.latlng.lat === 0 || comp.latlng.lng === 0)
+                .map((comp: CompProperty) => comp.id);
             }
           }
           break;
@@ -1833,13 +1837,13 @@ export class DatabaseStorage implements IStorage {
         case 'PHOTO_QC_UNRESOLVED': {
           // Check for unresolved photo QC issues
           const photosQcSummary = await this.getPhotosQcSummary(order.id);
-          violates = photosQcSummary.requiresAttention || photosQcSummary.blurredCount > 0;
+          violates = photosQcSummary.requiresAttention || (photosQcSummary.blurredCount || 0) > 0;
           break;
         }
         case 'MISSING_COMP_PHOTOS': {
           // Check if required comp photos are missing
           const photos = await this.getPhotos(order.id);
-          const exteriorPhotos = photos.filter(p => p.category === 'exterior');
+          const exteriorPhotos = photos.filter(p => p.category && ['exteriorFront', 'exteriorLeft', 'exteriorRight', 'exteriorRear'].includes(p.category));
           violates = exteriorPhotos.length < 3; // Require at least 3 exterior photos
           break;
         }

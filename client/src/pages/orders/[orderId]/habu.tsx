@@ -206,12 +206,12 @@ export default function Habu() {
 
         {/* Sign-off Panel */}
         <SignoffPanel
-          status={tab?.signoff || 'pending'}
-          signedBy={tab?.signedBy}
-          signedAt={tab?.signedAt}
-          overrideReason={tab?.overrideReason}
-          onSignoff={(overrideReason) => signoffMutation.mutate(overrideReason)}
-          isPending={signoffMutation.isPending}
+          signoff={tab?.signoff || { state: 'unsigned' }}
+          status={tab?.qc.status || 'green'}
+          openIssues={tab?.qc.openIssues || 0}
+          onSignoff={async (overrideReason) => {
+            await signoffMutation.mutateAsync(overrideReason);
+          }}
           data-testid="signoff-habu"
         />
       </div>
@@ -474,7 +474,7 @@ export default function Habu() {
             </CardHeader>
             <CardContent>
               <HabuNarrative
-                habuState={habuState}
+                habuState={habuState || null}
                 onNotesUpdate={(notes) => updateNotesMutation.mutate(notes)}
                 isPending={updateNotesMutation.isPending}
               />
@@ -486,8 +486,9 @@ export default function Habu() {
       {/* Version Diff Viewer */}
       {showVersions && (
         <VersionDiffViewer
-          orderId={orderId!}
-          tabKey="habu"
+          versions={tab?.versions || []}
+          currentData={tab?.currentData || {}}
+          open={showVersions}
           onClose={() => setShowVersions(false)}
         />
       )}

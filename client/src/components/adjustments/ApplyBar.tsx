@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { audit } from "../../../lib/audit";
+import { audit } from "../../../../lib/audit";
 import { type AdjustmentRunInput, type AdjustmentRunResult, type AdjustmentsBundle, type EngineSettings } from "@shared/adjustments";
 
 interface ApplyBarProps {

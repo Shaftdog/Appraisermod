@@ -542,8 +542,8 @@ export const habuInputsSchema = z.object({
     exposure: z.enum(['corner', 'interior', 'flag']).optional(),
     gla: z.number().optional(),
     yearBuilt: z.number().optional(),
-    condition: z.number().min(1).max(5).optional(),
-    quality: z.number().min(1).max(5).optional(),
+    condition: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+    quality: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
     parking: z.number().optional()
   }),
   zoning: zoningDataSchema,

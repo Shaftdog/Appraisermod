@@ -113,8 +113,10 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
     mutationFn: async (data: DeliveryFormValues) => {
       const deliveryRequest: DeliveryRequest = {
         orderId,
+        clientId: data.clientProfileId,
         clientProfileId: data.clientProfileId,
         formats: data.formats,
+        deliveryMethod: 'download',
         finalize: data.finalize,
       };
       
@@ -134,12 +136,12 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
           clientId: data.clientId,
           formatCount: data.formats.length,
           totalSize: data.totalSize,
-          itemCount: data.items.length
+          itemCount: data.items?.length || 0
         }
       });
 
       // Telemetry for delivery package size
-      telemetry.deliverySize(data.totalSize);
+      telemetry.deliverySize(data.totalSize || 0);
 
       setRequestStatus('success');
       setDeliveryPackage(data);
@@ -333,7 +335,7 @@ export function DeliveryDrawer({ orderId, isOpen, onClose }: DeliveryDrawerProps
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Delivery Method</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value} disabled={requestStatus === 'requesting'}>
+                      <Select onValueChange={(value) => field.onChange(value === 'true')} defaultValue={field.value ? 'true' : 'false'} disabled={requestStatus === 'requesting'}>
                         <FormControl>
                           <SelectTrigger data-testid="select-delivery-method">
                             <SelectValue />

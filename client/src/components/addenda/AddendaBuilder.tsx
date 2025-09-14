@@ -24,7 +24,6 @@ import {
 import {
   AddendaDocument,
   AddendaPage,
-  AddendaElement,
   AddendaEditorState,
   AddendaOperation,
   PhotoElement,
@@ -36,6 +35,7 @@ import {
   DEFAULT_GRID_SETTINGS,
   LAYOUT_CONSTRAINTS
 } from '@/types/addenda';
+import { AddendaElement, updateElement, migrateLegacyElement } from '@shared/addenda';
 import { PhotoMeta } from '@/types/photos';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -163,7 +163,7 @@ export function AddendaBuilder({
         if (page) {
           const elementIndex = page.elements.findIndex(e => e.id === operation.elementId);
           if (elementIndex !== -1) {
-            page.elements[elementIndex] = { ...page.elements[elementIndex], ...operation.updates };
+            page.elements[elementIndex] = updateElement(page.elements[elementIndex], operation.updates);
           }
         }
         break;

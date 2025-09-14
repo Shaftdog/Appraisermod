@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema, adjustmentRunInputSchema, engineSettingsSchema } from "@shared/schema";
+import { insertUserSchema, type TabKey, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema, adjustmentRunInputSchema, engineSettingsSchema } from "@shared/schema";
 
 // Security validation schemas for review/policy endpoints
 const policyPackSchema = z.object({
@@ -22,7 +22,7 @@ const policyPackSchema = z.object({
 });
 
 const reviewUpdateSchema = z.object({
-  status: z.enum(['pending', 'in_review', 'changes_requested', 'approved', 'revisions_submitted']).optional(),
+  status: z.enum(['open', 'in_review', 'changes_requested', 'approved', 'revisions_submitted']).optional(),
   assignedTo: z.string().optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional()
 });
@@ -2020,7 +2020,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deliveryDir = path.join(process.cwd(), "temp/deliveries", deliveryId);
       await fs.mkdir(deliveryDir, { recursive: true });
 
-      const packageItems: Array<{ type: string; filename: string; size: number }> = [];
+      const packageItems: Array<{ type: string; filename: string; size: number; path: string }> = [];
 
       // Generate MISMO UAD XML if requested
       if (validatedRequest.formats.includes('uad_xml')) {
@@ -2053,14 +2053,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })),
             timeAdjustment: {
               basis: timeAdj?.basis ?? 'salePrice',
-              pctPerMonth: timeAdj?.pctPerMonth ?? 0,
-              effectiveDateISO: effective
+              rate: timeAdj?.pctPerMonth ?? 0,
+              effectiveDate: effective
             },
             marketMetrics: {
-              trendPctPerMonth: mcr?.trendPctPerMonth ?? 0,
-              monthsOfInventory: mcr?.monthsOfInventory ?? null,
-              domMedian: mcr?.domMedian ?? null,
-              spToLpMedian: mcr?.spToLpMedian ?? null
+              trendPerMonth: mcr?.trendPctPerMonth ?? 0,
+              monthsOfInventory: mcr?.monthsOfInventory ?? 0,
+              daysOnMarket: mcr?.domMedian ?? 0,
+              salePriceToListPrice: mcr?.spToLpMedian ?? 0
             },
             appraiser: {
               name: 'John Appraiser',
@@ -2082,7 +2082,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             packageItems.push({
               type: 'uad_xml',
               filename: `${validatedRequest.orderId}_UAD.xml`,
-              size: xmlStats.size
+              size: xmlStats.size,
+              path: xmlPath
             });
           } else {
             console.warn('UAD XML validation warnings:', validation.warnings);
@@ -2110,7 +2111,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             packageItems.push({
               type: 'photo',
               filename: `photos/${safeName}`,
-              size: photoStats.size
+              size: photoStats.size,
+              path: destAbs
             });
           } catch (photoError) {
             console.error(`Error copying photo ${photo.id}:`, photoError);
@@ -2129,7 +2131,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           packageItems.push({
             type: 'workfile_zip',
             filename: `${validatedRequest.orderId}_Workfile.zip`,
-            size: zipStats.size
+            size: zipStats.size,
+            path: zipPath
           });
         } catch (zipError) {
           console.error('Error creating workfile ZIP:', zipError);
@@ -2140,17 +2143,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deliveryPackage: DeliveryPackage = {
         id: deliveryId,
         orderId: validatedRequest.orderId,
-        request: validatedRequest,
+        request: {
+          ...validatedRequest,
+          clientId: validatedRequest.clientProfileId,
+          deliveryMethod: 'download' as const
+        },
         status: 'success' as const,
         messages: [],
         requestedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
         packageItems,
-        metadata: {
-          orderEffectiveDate: order.dueDate || new Date().toISOString(),
-          generatedAt: new Date().toISOString() || 'download',
-          requestedBy: req.user!.id
-        }
+        formats: validatedRequest.formats || []
       };
 
       // Save delivery package metadata
@@ -2559,16 +2562,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return acc;
         }, {} as Record<string, number[]>);
         
-        Object.entries(groupedByKey).forEach(([key, values]: [string, number[]]) => {
-          const sorted = [...values].sort((a: number, b: number) => a - b);
+        Object.entries(groupedByKey).forEach(([key, values]) => {
+          const numberValues = values as number[];
+          const sorted = [...numberValues].sort((a: number, b: number) => a - b);
           const p95Index = Math.floor(sorted.length * 0.95);
           
           metrics[key] = {
-            count: values.length,
-            avg: values.reduce((sum: number, v: number) => sum + v, 0) / values.length,
+            count: numberValues.length,
+            avg: numberValues.reduce((sum: number, v: number) => sum + v, 0) / numberValues.length,
             p95: sorted[p95Index] || 0,
-            min: Math.min(...values),
-            max: Math.max(...values)
+            min: Math.min(...numberValues),
+            max: Math.max(...numberValues)
           };
         });
         
@@ -2793,7 +2797,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error) {
       console.error('ATTOM closed sales import error:', error);
-      res.status(500).json({ message: error.message || 'Failed to import ATTOM closed sales' });
+      res.status(500).json({ message: (error as Error).message || 'Failed to import ATTOM closed sales' });
     }
   });
   
@@ -2815,7 +2819,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const county of ATTOM.counties) {
         try {
           const result = await importClosedSales(county);
-          results.push({ county, ...result });
+          results.push({ ...result });
         } catch (error: any) {
           results.push({ county, error: error.message });
         }

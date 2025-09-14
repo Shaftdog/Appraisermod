@@ -267,6 +267,11 @@ export async function getPhotosQcSummary(orderId: string): Promise<PhotosQcSumma
   return response.json();
 }
 
+export async function reorderPhotos(orderId: string, photoIds: string[]): Promise<void> {
+  const response = await apiRequest('PUT', `/api/photos/${orderId}/reorder`, { photoIds });
+  return response.json();
+}
+
 // File URL generation
 export function getPhotoUrl(orderId: string, photoId: string): string {
   return PhotoAPI.getPhotoFile(orderId, photoId);

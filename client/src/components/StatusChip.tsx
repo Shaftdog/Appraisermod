@@ -10,6 +10,7 @@ interface StatusChipProps {
   lastReviewedBy?: string;
   lastReviewedAt?: string;
   className?: string;
+  size?: 'sm' | 'md' | 'lg';
 }
 
 export function StatusChip({ 
@@ -18,7 +19,8 @@ export function StatusChip({
   overriddenIssues = 0,
   lastReviewedBy,
   lastReviewedAt,
-  className 
+  className,
+  size = 'md'
 }: StatusChipProps) {
   const label = getStatusLabel(status, openIssues, overriddenIssues);
   const colorClasses = getStatusColor(status);

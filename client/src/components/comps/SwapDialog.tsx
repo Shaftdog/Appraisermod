@@ -42,7 +42,7 @@ export function SwapDialog({
 
   const handleSwap = () => {
     if (selectedIndex !== null && canProceed) {
-      onSwap(selectedIndex, isTargetLocked);
+      onSwap(selectedIndex, isTargetLocked || false);
       onOpenChange(false);
       setSelectedIndex(null);
       setConfirmationText("");

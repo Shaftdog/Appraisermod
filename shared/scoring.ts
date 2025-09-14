@@ -1,4 +1,5 @@
 import type { WeightSet, ConstraintSet, CompProperty } from '@shared/schema';
+import { ScoreBreakdown, createScorePart, validateWeightsSum } from './scoring-types';
 
 // Utility function to clamp values between min and max
 function clamp(value: number, min: number, max: number): number {
@@ -135,7 +136,13 @@ export function scoreAndRankComps(
       return {
         ...comp,
         score,
-        scoreBreakdown: similarities
+        scoreBreakdown: {
+          distance: createScorePart(similarities.distance, weights.distance),
+          recency: createScorePart(similarities.recency, weights.recency),
+          gla: createScorePart(similarities.gla, weights.gla),
+          quality: createScorePart(similarities.quality, weights.quality),
+          condition: createScorePart(similarities.condition, weights.condition)
+        }
       };
     })
     .sort((a, b) => (b.score || 0) - (a.score || 0)); // Sort by score descending

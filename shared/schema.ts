@@ -81,6 +81,7 @@ export const loginUserSchema = z.object({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type LoginUser = z.infer<typeof loginUserSchema>;
 export type User = typeof users.$inferSelect;
+export type PublicUser = Omit<User, 'password'>;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
 export type InsertVersion = z.infer<typeof insertVersionSchema>;
@@ -131,6 +132,10 @@ export interface TabState {
   signoff: Signoff;
   versions: VersionSnapshot[];
   currentData: Record<string, any>;
+  data?: Record<string, any>;  // legacy field
+  signedBy?: string;           // legacy field
+  signedAt?: string;           // legacy field  
+  overrideReason?: string;     // legacy field
 }
 
 export interface OrderData {
@@ -138,6 +143,7 @@ export interface OrderData {
   orderNumber: string;
   clientName: string;
   dueDate?: string;
+  effectiveDate?: string; // legacy field
   overallStatus: RiskStatus;
   tabs: Record<TabKey, TabState>;
 }
@@ -280,7 +286,7 @@ export interface MarketSettings {
   monthsBack: 12 | 18 | 24;
   statuses: ListingStatus[];        // default: ['sold','active','pending','expired']
   usePolygon: boolean;              // default: true
-  metric: 'salePrice' | 'ppsf';     // trend basis
+  metric: TimeAdjustmentBasis;      // unified basis naming
   smoothing: 'none' | 'ema';        // optional display smoothing
   minSalesPerMonth: number;         // default: 5
   effectiveDateISO?: string;        // order's effective date; fallback to today
@@ -298,13 +304,9 @@ export interface McrMetrics {
   ciPctPerMonth?: { low: number; high: number }; // optional
 }
 
-export interface TimeAdjustments {
-  orderId: string;
-  basis: 'salePrice' | 'ppsf';
-  pctPerMonth: number;    // signed decimal (e.g., 0.007 = +0.7%/mo)
-  effectiveDateISO: string; // REQUIRED: order's effective date
-  computedAt: string;     // ISO
-}
+// Import from compat layer for unified time adjustments
+import type { TimeAdjustments as TimeAdjustmentsCompat, TimeAdjustmentBasis } from "../types/compat";
+export type TimeAdjustments = TimeAdjustmentsCompat;
 
 // Zod Schemas for MCR
 export const listingStatusSchema = z.enum(['active', 'pending', 'sold', 'expired']);
@@ -459,6 +461,8 @@ export interface PhotosQcSummary {
   status: 'green' | 'yellow' | 'red';
   photoCount: number;
   categoryCounts: Record<PhotoCategory, number>;
+  requiresAttention?: boolean; // legacy field
+  blurredCount?: number;       // legacy field
 }
 
 // Photo Zod Schemas for API Validation

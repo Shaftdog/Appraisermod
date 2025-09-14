@@ -51,7 +51,7 @@ export default function Photos() {
 
   const { data: photosQc, isLoading: qcLoading } = useQuery({
     queryKey: ['/api/photos', orderId, 'qc'],
-    queryFn: () => photoApi.getPhotosQc(orderId!),
+    queryFn: () => photoApi.getPhotosQcSummary(orderId!),
     enabled: !!orderId,
   });
 
@@ -140,7 +140,7 @@ export default function Photos() {
   });
 
   // Check if sign-off should be blocked by photo QC
-  const { isBlocked: signoffBlocked, blockReason } = usePhotoSignoffBlock(photosQc);
+  const { isBlocked: signoffBlocked, blockReason } = usePhotoSignoffBlock(photosQc || null);
 
   // Photo handlers
   const handlePhotoSelect = (photo: PhotoMeta) => {
@@ -254,7 +254,7 @@ export default function Photos() {
               lastReviewedBy={tab.qc.lastReviewedBy}
               lastReviewedAt={tab.qc.lastReviewedAt}
             />
-            <PhotosQcBadge qcSummary={photosQc} loading={qcLoading} />
+            <PhotosQcBadge qcSummary={photosQc || null} loading={qcLoading} />
           </div>
         </div>
 
@@ -263,7 +263,6 @@ export default function Photos() {
           status={signoffBlocked ? 'red' : tab.qc.status}
           openIssues={tab.qc.openIssues + (signoffBlocked ? 1 : 0)}
           onSignoff={signoffMutation.mutateAsync}
-          overrideReason={blockReason || undefined}
         />
       </div>
 
@@ -294,9 +293,22 @@ export default function Photos() {
             <TabsContent value="gallery" className="space-y-6">
               <PhotoCaptureBar
                 orderId={orderId!}
+                selectedCount={selectedPhotos.size}
                 selectedPhotos={selectedPhotos}
                 categoryFilter={categoryFilter}
                 onCategoryFilterChange={setCategoryFilter}
+                onPhotosSelect={(files) => {
+                  // Handle file selection
+                  Array.from(files).forEach(file => {
+                    // Upload logic would go here
+                  });
+                }}
+                onBulkCategory={(category) => {
+                  // Handle bulk category update
+                }}
+                onBulkCaption={(prefix) => {
+                  // Handle bulk caption update
+                }}
                 onUploadComplete={handleRefresh}
                 onBulkDelete={(photoIds) => {
                   if (confirm(`Delete ${photoIds.length} selected photos?`)) {
@@ -354,9 +366,22 @@ export default function Photos() {
             
             <PhotoCaptureBar
               orderId={orderId!}
+              selectedCount={selectedPhotos.size}
               selectedPhotos={selectedPhotos}
               categoryFilter={categoryFilter}
               onCategoryFilterChange={setCategoryFilter}
+              onPhotosSelect={(files) => {
+                // Handle file selection
+                Array.from(files).forEach(file => {
+                  // Upload logic would go here
+                });
+              }}
+              onBulkCategory={(category) => {
+                // Handle bulk category update
+              }}
+              onBulkCaption={(prefix) => {
+                // Handle bulk caption update
+              }}
               onUploadComplete={handleRefresh}
               onBulkDelete={(photoIds) => {
                 if (confirm(`Delete ${photoIds.length} selected photos?`)) {

@@ -3,6 +3,7 @@
  */
 
 import { PhotoMeta } from './photos';
+import type { AddendaElement } from '@shared/addenda';
 
 // Layout and positioning types
 export interface Position {
@@ -76,7 +77,8 @@ export interface PageBreakElement extends BaseAddendaElement {
   type: 'pageBreak';
 }
 
-export type AddendaElement = PhotoElement | TextElement | HeadingElement | SpacerElement | PageBreakElement;
+// Legacy AddendaElement - now using discriminated union from @shared/addenda
+// export type AddendaElement = PhotoElement | TextElement | HeadingElement | SpacerElement | PageBreakElement;
 
 // Page and layout configuration
 export interface PageSettings {

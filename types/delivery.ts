@@ -58,6 +58,9 @@ export interface DeliveryRecord {
   messages: string[];
   formats: string[];
   packageItems: PackageItem[];
+  clientId?: string;
+  totalSize?: number;
+  items?: PackageItem[];
 }
 
 // Type aliases for backward compatibility

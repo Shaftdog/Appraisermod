@@ -213,13 +213,13 @@ export default function Market() {
   // ATTOM closed sales import mutation
   const importAttomSalesMutation = useMutation({
     mutationFn: async () => {
-      if (!order?.tabs.subject?.data.address) {
+      if (!order?.tabs.subject?.currentData?.address) {
         throw new Error('Subject property address is required for ATTOM import');
       }
       
       const response = await apiRequest('POST', '/api/attom/closed-sales/import', {
         orderId,
-        subjectAddress: order.tabs.subject.data.address,
+        subjectAddress: order.tabs.subject.currentData?.address,
         settings: attomImportSettings
       });
       return response.json();
@@ -318,7 +318,11 @@ export default function Market() {
 
   // Compute chart data from selected data source
   const selectedDataSource = useAttomData && attomClosedSales ? 
-    attomClosedSales.map(sale => ({
+    attomClosedSales.map((sale, index) => ({
+      id: `attom-${index}`,
+      address: sale.address || 'Unknown Address',
+      lat: sale.lat || 0,
+      lng: sale.lon || 0,
       status: 'sold' as const,
       closeDate: sale.closeDate,
       salePrice: sale.closePrice,
@@ -861,23 +865,23 @@ export default function Market() {
                     <div className="space-y-3">
                       <div className="flex justify-between">
                         <span>Monthly Adjustment Rate:</span>
-                        <span className={timeAdjustments.monthlyRate > 0 ? 'text-green-600' : 'text-red-600'}>
-                          {(timeAdjustments.monthlyRate * 100).toFixed(2)}%
+                        <span className={(timeAdjustments.legacy?.monthlyRate || timeAdjustments.pctPerMonth || 0) > 0 ? 'text-green-600' : 'text-red-600'}>
+                          {((timeAdjustments.legacy?.monthlyRate || timeAdjustments.pctPerMonth || 0) * 100).toFixed(2)}%
                         </span>
                       </div>
                       <div className="flex justify-between">
                         <span>Method:</span>
-                        <Badge variant="secondary">{timeAdjustments.method}</Badge>
+                        <Badge variant="secondary">{timeAdjustments.legacy?.method || 'Standard'}</Badge>
                       </div>
                     </div>
                     <div className="space-y-3">
                       <div className="flex justify-between">
                         <span>Confidence Level:</span>
-                        <span>{(timeAdjustments.confidence * 100).toFixed(1)}%</span>
+                        <span>{((timeAdjustments.legacy?.confidence || 0) * 100).toFixed(1)}%</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Data Points:</span>
-                        <span>{timeAdjustments.dataPoints}</span>
+                        <span>{timeAdjustments.legacy?.dataPoints || 0}</span>
                       </div>
                     </div>
                   </div>

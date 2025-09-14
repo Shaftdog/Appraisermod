@@ -14,6 +14,7 @@ export interface PhotoMeta {
   originalPath: string;
   displayPath: string;
   thumbPath: string;
+  filename?: string;
   width: number;
   height: number;
   exif?: {

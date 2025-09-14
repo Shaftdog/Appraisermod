@@ -73,6 +73,7 @@ export interface AdjustmentRunResult {
   attrs: AttrAdjustment[];
   settings: EngineSettings;
   input: AdjustmentRunInput;
+  engine?: string;
 }
 
 export interface CompAdjustmentLine {

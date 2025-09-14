@@ -25,24 +25,30 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 interface PhotoCaptureBarProps {
+  orderId: string;
   selectedCount: number;
+  selectedPhotos: Set<string>;
   categoryFilter?: PhotoCategory | 'all';
   onCategoryFilterChange: (category: PhotoCategory | 'all') => void;
   onPhotosSelect: (files: FileList) => void;
   onBulkCategory: (category: PhotoCategory) => void;
   onBulkCaption: (prefix: string) => void;
-  onBulkDelete: () => void;
+  onBulkDelete: (photoIds: string[]) => void;
+  onUploadComplete?: () => void;
   disabled?: boolean;
 }
 
 export function PhotoCaptureBar({
+  orderId,
   selectedCount,
+  selectedPhotos,
   categoryFilter = 'all',
   onCategoryFilterChange,
   onPhotosSelect,
   onBulkCategory,
   onBulkCaption,
   onBulkDelete,
+  onUploadComplete,
   disabled = false
 }: PhotoCaptureBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -206,7 +212,7 @@ export function PhotoCaptureBar({
             <Button
               variant="outline"
               size="sm"
-              onClick={onBulkDelete}
+              onClick={() => onBulkDelete(Array.from(selectedPhotos))}
               className="flex items-center gap-2 text-destructive hover:text-destructive border-destructive/20 hover:border-destructive"
               data-testid="button-bulk-delete"
             >

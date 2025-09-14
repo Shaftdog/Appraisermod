@@ -47,6 +47,8 @@ export interface ReviewItem {
   reviewerSignedOff?: string;    // ISO
   currentVersionId?: string;     // for diffs
   previousVersionId?: string;    // for diffs
+  reviewerDetails?: any;         // legacy field
+  appraiserDetails?: any;        // legacy field
 }
 
 export interface Thread {
