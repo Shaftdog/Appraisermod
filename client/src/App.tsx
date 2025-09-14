@@ -7,6 +7,8 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { LoginPage } from "@/pages/LoginPage";
 import { RegisterPage } from "@/pages/RegisterPage";
+import { ReviewerDashboard } from "@/pages/ReviewerDashboard";
+import { OrderReview } from "@/pages/OrderReview";
 import NotFound from "@/pages/not-found";
 import OrderPage from "@/pages/orders/[orderId]";
 
@@ -16,6 +18,20 @@ function Router() {
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/" component={() => <Redirect to="/orders/order-123" />} />
+      
+      {/* Reviewer Routes */}
+      <Route path="/reviewer" component={() => (
+        <ProtectedRoute>
+          <ReviewerDashboard />
+        </ProtectedRoute>
+      )} />
+      <Route path="/reviewer/orders/:orderId" component={() => (
+        <ProtectedRoute>
+          <OrderReview />
+        </ProtectedRoute>
+      )} />
+      
+      {/* Order Routes */}
       <Route path="/orders/:orderId/:tab?" component={() => (
         <ProtectedRoute>
           <OrderPage />
@@ -26,6 +42,7 @@ function Router() {
           <OrderPage />
         </ProtectedRoute>
       )} />
+      
       <Route component={NotFound} />
     </Switch>
   );
