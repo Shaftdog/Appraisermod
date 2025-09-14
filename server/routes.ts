@@ -3,11 +3,51 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { insertUserSchema, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema, adjustmentRunInputSchema, engineSettingsSchema } from "@shared/schema";
+
+// Security validation schemas for review/policy endpoints
+const policyPackSchema = z.object({
+  meta: z.object({
+    id: z.string().regex(/^[a-z0-9-]+$/, 'Policy pack ID must contain only lowercase letters, numbers, and hyphens').min(1).max(50),
+    name: z.string().min(1).max(100),
+    version: z.string().min(1).max(20),
+    description: z.string().optional()
+  }),
+  rules: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    enabled: z.boolean(),
+    severity: z.enum(['low', 'medium', 'high', 'critical']),
+    condition: z.string().min(1)
+  }))
+});
+
+const reviewUpdateSchema = z.object({
+  status: z.enum(['pending', 'in_review', 'changes_requested', 'approved', 'revisions_submitted']).optional(),
+  assignedTo: z.string().optional(),
+  priority: z.enum(['low', 'medium', 'high', 'urgent']).optional()
+});
+
+const ruleOverrideSchema = z.object({
+  ruleId: z.string().min(1),
+  reason: z.string().min(10).max(500)
+});
+
+const commentSchema = z.object({
+  content: z.string().min(1).max(1000),
+  threadId: z.string().optional(),
+  parentId: z.string().optional()
+});
+
+const signoffSchema = z.object({
+  accept: z.boolean(),
+  reason: z.string().min(1).max(500).optional()
+});
 import { type AdjustmentRunInput, type AdjustmentRunResult, type EngineSettings, type AdjustmentsBundle, DEFAULT_ENGINE_SETTINGS, normalizeEngineWeights } from "@shared/adjustments";
 import { requireAuth, type AuthenticatedRequest } from "./middleware/auth";
 import { validateWeights, validateConstraints } from "../shared/scoring";
 import multer from "multer";
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import sharp from "sharp";
 import "./types"; // Import session type extensions
@@ -151,6 +191,247 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Internal server error' });
     }
   });
+
+  // ===== POLICY API ROUTES =====
+  
+  // Utility function to check admin access
+  function requireAdmin(req: AuthenticatedRequest, res: any, next: () => void) {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    next();
+  }
+
+  // Get available policy packs (admin only)
+  app.get("/api/policy/packs", requireAuth, (req: AuthenticatedRequest, res, next) => requireAdmin(req, res, next), async (req: AuthenticatedRequest, res) => {
+    try {
+      const packsDir = path.join(process.cwd(), 'data/policy/packs');
+      if (!fsSync.existsSync(packsDir)) {
+        fsSync.mkdirSync(packsDir, { recursive: true });
+      }
+      
+      const files = fsSync.readdirSync(packsDir).filter((f: string) => f.endsWith('.json'));
+      const packs = files.map((file: string) => {
+        const data = JSON.parse(fsSync.readFileSync(path.join(packsDir, file), 'utf8'));
+        return data.meta;
+      });
+      
+      res.json(packs);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Create or update a policy pack (admin only)
+  app.post("/api/policy/packs", requireAuth, (req: AuthenticatedRequest, res, next) => requireAdmin(req, res, next), async (req: AuthenticatedRequest, res) => {
+    try {
+      // Validate and sanitize input
+      const validatedData = policyPackSchema.parse(req.body);
+      const packId = validatedData.meta.id; // Now guaranteed to be safe
+      
+      const packsDir = path.join(process.cwd(), 'data/policy/packs');
+      if (!fsSync.existsSync(packsDir)) {
+        fsSync.mkdirSync(packsDir, { recursive: true });
+      }
+      
+      const packPath = path.join(packsDir, `${packId}.json`);
+      
+      // Additional security: verify the resolved path is still within the packs directory
+      const resolvedPath = path.resolve(packPath);
+      const resolvedPacksDir = path.resolve(packsDir);
+      if (!resolvedPath.startsWith(resolvedPacksDir + path.sep)) {
+        return res.status(400).json({ message: 'Invalid policy pack ID' });
+      }
+      
+      fsSync.writeFileSync(resolvedPath, JSON.stringify(validatedData, null, 2));
+      res.json({ success: true, id: packId });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid input data', errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ===== REVIEW API ROUTES =====
+
+  // Run policy evaluation against an order
+  app.post("/api/review/:id/run", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const result = await storage.runPolicyCheck(orderId);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get review item for an order
+  app.get("/api/review/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const reviewItem = await storage.getReviewItem(orderId);
+      res.json(reviewItem);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update review item (status, assignee, versions)
+  app.put("/api/review/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Validate input
+      const validatedUpdates = reviewUpdateSchema.parse(req.body);
+      const reviewItem = await storage.updateReviewItem(orderId, validatedUpdates);
+      res.json(reviewItem);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid input data', errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add override for a rule
+  app.post("/api/review/:id/override", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Validate input
+      const { ruleId, reason } = ruleOverrideSchema.parse(req.body);
+      const override = await storage.addRuleOverride(orderId, ruleId, reason, req.user!.id);
+      res.json(override);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid input data', errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add comment or reply to thread
+  app.post("/api/review/:id/comment", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Validate input
+      const validatedCommentData = commentSchema.parse(req.body);
+      const comment = await storage.addReviewComment(orderId, validatedCommentData, req.user!.id);
+      res.json(comment);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid input data', errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Resolve a thread
+  app.post("/api/review/:id/comment/:threadId/resolve", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const threadId = req.params.threadId;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const thread = await storage.resolveReviewThread(orderId, threadId);
+      res.json(thread);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get review queue
+  app.get("/api/review/queue", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const queue = await storage.getReviewQueue();
+      res.json(queue);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Review sign-off (FIXED: Use server-side role enforcement)
+  app.post("/api/review/:id/signoff", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Validate input (no role from client)
+      const { accept, reason } = signoffSchema.parse(req.body);
+      
+      // SECURITY FIX: Use server-side role from authenticated session
+      const userRole = req.user!.role;
+      if (userRole !== 'reviewer' && userRole !== 'appraiser') {
+        return res.status(403).json({ message: 'Only reviewers and appraisers can sign off' });
+      }
+      
+      const signoff = await storage.reviewSignoff(orderId, userRole, accept, reason, req.user!.id);
+      res.json(signoff);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid input data', errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get diff between versions
+  app.get("/api/review/:id/diff", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const { from, to } = req.query;
+      const diff = await storage.getVersionDiff(orderId, from as string, to as string);
+      res.json(diff);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ===== ORDERS API ROUTES =====
+
   // Get order
   app.get("/api/orders/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {

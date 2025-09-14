@@ -1,0 +1,328 @@
+Awesome—here’s a copy-paste prompt for Replit to build #2: Reviewer Console + Policy QC as the next sprint. It’s frontend + mock routes only; do not modify your secured Photo API.
+
+⸻
+
+PROMPT FOR REPLIT
+
+PROJECT TITLE
+FE: Reviewer Console + Policy QC — Review queue, rule engine (R/Y/G), diff vs. last revision, inline change requests, override reasons, reviewer sign-off (separate from appraiser). Mock API only.
+
+⸻
+
+SCOPE RULES (IMPORTANT)
+	•	Do NOT touch the secured Photo endpoints.
+	•	Add new mock route handlers under app/api/review/* and app/api/policy/*, persisting JSON to /data/review/* and /data/orders/<id>/review/*.
+	•	Integrate with existing Order UI Shell:
+	•	Use existing tab QC chips (R/Y/G) and sign-off patterns.
+	•	Reuse Version snapshots (if available) or compute diffs from stored /data/orders/<id>/* JSON.
+
+⸻
+
+0) Types (add/extend)
+
+types/review.ts
+
+export type Risk = 'green' | 'yellow' | 'red';
+
+export type RuleSeverity = 'info' | 'minor' | 'major' | 'critical';
+export type RuleScope = 'order' | 'tab' | 'comp' | 'photo' | 'market' | 'adjustments';
+
+export interface PolicyRule {
+  id: string;                    // 'TIME_BASIS_MISMATCH'
+  name: string;                  // Human title
+  scope: RuleScope;
+  severity: RuleSeverity;
+  // JSONPath-like selector into order data (evaluate server-side mock)
+  selector: string;              // e.g. "$.market.timeAdjust.basis"
+  operator: 'eq'|'neq'|'gt'|'gte'|'lt'|'lte'|'exists'|'notExists'|'regex'|'in'|'notIn';
+  value?: any;                   // comparison value when applicable
+  messageTemplate: string;       // "Time basis {actual} differs from analysis basis {expected}"
+  autofix?: {                    // optional suggestion payload
+    action: 'set'|'unset'|'recompute',
+    path?: string,
+    value?: any
+  };
+  links?: string[];              // help links or policy docs
+  enabled: boolean;
+}
+
+export interface RuleHit {
+  ruleId: string;
+  severity: RuleSeverity;
+  risk: Risk;                    // map severity → risk
+  scope: RuleScope;
+  path: string;                  // data path hit
+  message: string;
+  entities?: string[];           // e.g. ['comp_04']
+  suggestion?: { action: string; path?: string; value?: any };
+}
+
+export interface ReviewItem {
+  orderId: string;
+  status: 'open'|'in_review'|'changes_requested'|'revisions_submitted'|'approved';
+  overallRisk: Risk;
+  createdAt: string;
+  updatedAt: string;
+  assignedTo?: string;           // reviewer userId
+  hits: RuleHit[];
+  overrides: Array<{ ruleId: string; reason: string; userId: string; at: string }>;
+  comments: Thread[];            // inline discussions
+  appraiserSignedOff?: string;   // ISO
+  reviewerSignedOff?: string;    // ISO
+  currentVersionId?: string;     // for diffs
+  previousVersionId?: string;    // for diffs
+}
+
+export interface Thread {
+  id: string;
+  orderId: string;
+  entityRef: string;             // e.g. 'tab:photos', 'comp:comp_04', 'field:market.timeAdjust'
+  createdBy: string;
+  createdAt: string;
+  status: 'open'|'resolved';
+  items: Comment[];
+}
+
+export interface Comment {
+  id: string;
+  authorId: string;
+  at: string;
+  kind: 'note'|'request_change'|'response';
+  text: string;
+  attachments?: Array<{name:string; url:string}>;
+}
+
+export interface ReviewQueueItem {
+  orderId: string;
+  client: string;
+  address: string;
+  dueDate: string;
+  appraiser: string;
+  status: ReviewItem['status'];
+  overallRisk: Risk;
+  hitsCount: { red: number; yellow: number; info: number };
+  updatedAt: string;
+}
+
+export interface DiffSummary {
+  orderId: string;
+  fromVersionId: string;
+  toVersionId: string;
+  changes: Array<{ path: string; before: any; after: any }>;
+}
+
+types/policy.ts
+
+export interface PolicyPackMeta {
+  id: string;             // 'default-shop-policy'
+  name: string;
+  version: string;        // '2025.09.0'
+  updatedAt: string;
+  enabled: boolean;
+}
+
+export interface PolicyPack {
+  meta: PolicyPackMeta;
+  rules: PolicyRule[];
+  riskMap?: Record<RuleSeverity, Risk>; // severity→risk mapping
+}
+
+
+⸻
+
+1) Mock API Routes
+
+Base directories
+	•	/data/policy/packs/*.json     (policy rules)
+	•	/data/review/queue.json        (queue snapshot)
+	•	/data/orders/<id>/review/*.json (review item, hits, comments, diffs)
+
+Route handlers (Next.js)
+	•	GET /api/policy/packs → list available packs (start with one default pack).
+	•	POST /api/policy/packs → create/update a pack (save JSON).
+	•	POST /api/review/:orderId/run → evaluate rules against order data and produce RuleHit[] + overallRisk (see seed rules below).
+	•	GET /api/review/:orderId → get ReviewItem.
+	•	PUT /api/review/:orderId → update status/assignee/previousVersionId/currentVersionId.
+	•	POST /api/review/:orderId/override → add override with reason for a ruleId (recorded for audit).
+	•	POST /api/review/:orderId/comment → add or reply in a Thread.
+	•	POST /api/review/:orderId/comment/:threadId/resolve → resolve a thread.
+	•	GET /api/review/queue → ReviewQueueItem[] (aggregate of items).
+	•	POST /api/review/:orderId/signoff → { role: 'reviewer'|'appraiser', accept: boolean, reason?: string } → stores reviewerSignedOff or resets to changes_requested.
+	•	GET /api/review/:orderId/diff → DiffSummary between previousVersionId and currentVersionId (use your existing snapshots or JSON diff).
+
+Implementation notes
+	•	Rule evaluation can be simple: load PolicyPack, traverse order JSON (from your existing /data/orders/<id>/*), evaluate operators, build RuleHit[].
+	•	Map severity→risk (default: critical→red, major→red, minor→yellow, info→green).
+	•	overallRisk = worst of hits unless reviewer overrides (overrides reduce counting but still logged).
+
+⸻
+
+2) Seed Policy Pack (starter rules)
+
+Create /data/policy/packs/default-shop-policy.json with examples like:
+	1.	Time basis mismatch
+
+	•	If $.market.timeAdjust.basis neq $.market.settings.metric → Major
+	•	message: “Time adjustment basis ({actual}) differs from analysis basis ({expected}).”
+
+	2.	Time adj magnitude guardrail
+
+	•	If abs($.market.timeAdjust.pctPerMonth) > 0.015 → Major
+	•	message: “Time adj exceeds ±1.5%/mo. Provide narrative or reduce.”
+
+	3.	Sparse market data
+
+	•	If $.market.mcr.sampleCounts.sold < 6 OR months with n<3 in >50% months → Major
+
+	4.	Comp outside polygon
+
+	•	Any primary comp with isInsidePolygon=false → Minor (require rationale)
+
+	5.	GLA adjustment cap
+
+	•	If per-comp absolute GLA adjustment > 15% of sale price → Major
+
+	6.	Unresolved face detections / photo QC
+
+	•	If $.photos.qc.unresolvedDetections > 0 OR missing required categories → Major
+
+	7.	Contradictory indicators
+
+	•	If trend ≥ +0.5%/mo and SP/LP median ≤ 95% and DOM median ≥ 45 → Minor (flag to review)
+
+(Add more as needed. Keep them enabled: true.)
+
+⸻
+
+3) Reviewer UI
+
+A) Reviewer Dashboard
+
+app/review/page.tsx
+	•	Filters: client, risk (R/Y/G), status, assignee, due range.
+	•	Table: address / client / due / appraiser / status / risk chips / hit counts / updatedAt.
+	•	Row click → Order Review page.
+
+B) Order Review Page
+
+app/review/[orderId]/page.tsx
+	•	Header: order info, overall risk chip, status dropdown (open → in_review → changes_requested → revisions_submitted → approved), assignee select.
+	•	Tabs/Panels:
+	1.	Policy Hits (left) + Details (right):
+	•	Left: list of RuleHits grouped by severity; quick filters (All/Red/Yellow/Info).
+	•	Each hit shows rule name, message, scope tag (Market/Comps/Photos…), and “Jump to”.
+	•	Actions: Request change (open thread), Override (requires reason; injects to overrides).
+	2.	Entity View (context panel): mini viewers:
+	•	Market mini: show trend %, basis, effective date, small chart.
+	•	Comps mini: primary comp cards w/ time adj + line items (read-only here).
+	•	Photos mini: thumbnails w/ QC badges.
+	3.	Diff tab:
+	•	Select from/to versions (default previous vs current)
+	•	Show field-level diffs with badges and copy-as-text.
+	•	Footer bar:
+	•	Request Changes (move to changes_requested; add a required summary comment).
+	•	Approve as Reviewer (only if no Red OR all Reds overridden w/ reasons).
+	•	Return to Appraiser (revisions_submitted/reset).
+
+Inline threads
+	•	Right drawer “Threads & Requests”: list of open threads; click → focus entity; add response; mark resolved.
+	•	Each hit can spawn a thread anchored to entity path.
+
+⸻
+
+4) Appraiser ↔ Reviewer loop hooks
+	•	In the Order Shell, if status = changes_requested, show a banner and a “Reviewer notes” button opening the threads panel filtered to appraiser.
+	•	When the appraiser updates data and re-signs their sections, they click “Submit Revisions” → status revisions_submitted (mock route PUT /api/review/:orderId).
+
+⸻
+
+5) Permissions (frontend-only)
+
+Add a tiny role config in config/roles.ts:
+
+export type Role = 'appraiser'|'reviewer'|'chief'|'admin';
+export const CURRENT_ROLE: Role = (process.env.NEXT_PUBLIC_ROLE as Role) || 'reviewer';
+
+	•	Hide Reviewer dashboard/actions for non-reviewers.
+	•	Chief/Admin can edit policy packs and export the workfile (future sprint).
+
+⸻
+
+6) Components to Build
+	•	components/review/QueueTable.tsx
+	•	components/review/RiskChip.tsx
+	•	components/review/PolicyHitItem.tsx
+	•	components/review/OverrideDialog.tsx (requires reason, stores override)
+	•	components/review/RequestChangeDialog.tsx (starts a thread with required fields)
+	•	components/review/ThreadsDrawer.tsx
+	•	components/review/DiffViewer.tsx (reuse jsondiffpatch if present)
+	•	components/review/StatusBar.tsx (actions + guardrails)
+	•	components/policy/PackEditor.tsx (optional this sprint: toggle rules, edit thresholds; gated to admin)
+
+⸻
+
+7) UX & Guardrails
+	•	Approvals:
+	•	Block Approve if any Red hit remains without an override reason.
+	•	Show count of Reds/Yellows; clicking counters filters the list.
+	•	Overrides:
+	•	Persist reason + user + timestamp to ReviewItem.overrides.
+	•	On rerun, still show the hit but visually muted as “overridden”.
+	•	Diff first:
+	•	If previousVersionId missing, set it to the last reviewer-approved version (mock: previous snapshot in /data/orders/<id>/versions/).
+	•	Autofix:
+	•	If a rule has autofix suggestion, show “Apply suggestion” (mock FE-only change + write to relevant JSON). Always confirm.
+
+⸻
+
+8) Acceptance Criteria (demo)
+	•	Reviewer Dashboard lists orders with risk chips and hit counts; filtering works.
+	•	Run Policy on an order produces RuleHit[] with correct severities mapped to R/Y/G aggregate.
+	•	Override requires a reason and records it; overridden hits appear muted.
+	•	Request change opens a thread; status can be set to changes_requested; appraiser sees notes badge.
+	•	Diff view shows changes between previous/current versions; copy-as-text works.
+	•	Approve as Reviewer is enabled only when Reds are cleared/overridden; sets reviewerSignedOff.
+	•	Round-trip: appraiser submits revisions → reviewer re-runs policy → approves.
+	•	All artifacts persist in /data/policy/* and /data/orders/<id>/review/*.
+
+⸻
+
+9) Manual Test Script (copy/paste)
+	1.	Open /review → confirm queue shows at least one order with Yellow/Red.
+	2.	Click an order → Run Policy (if not auto) → see hits:
+	•	Time basis mismatch
+	•	Primary comp outside polygon
+	•	Photo QC unresolved
+	3.	Click a Red hit → Override → enter reason → hit shows Overridden.
+	4.	Click a Yellow hit → Request change → add text; status becomes changes_requested.
+	5.	(Simulate appraiser) Update data to fix hit; Submit Revisions.
+	6.	Reviewer page: Diff shows changed fields; Run Policy again → Yellow cleared.
+	7.	Approve as Reviewer → status updates to approved, reviewerSignedOff timestamp saved.
+	8.	Refresh → items persist; queue shows Green Approved.
+
+⸻
+
+10) Seed Data & Helpers
+	•	Seed one order with intentional violations (basis mismatch, 1 primary comp outside polygon, missing “Street” photo).
+	•	Provide a small lib/policy/eval.ts with simple operator evaluation and path resolution (JSONPath-lite).
+	•	Map severity→risk default:
+	•	critical/major → red, minor → yellow, info → green.
+
+⸻
+
+11) Non-Goals (this sprint)
+	•	No email/slack notifications (future).
+	•	No MISMO export or client delivery (separate sprint).
+	•	No real auth/ACL—just the role flag and guards.
+
+⸻
+
+12) Quality Bar
+	•	Strong TypeScript types; strict null checks.
+	•	a11y on dialogs and lists; keyboard nav; focus management.
+	•	Clear toasts for Run Policy, Overrides, Requests, Approvals.
+	•	All endpoints & roles centralized in config.
+
+⸻
+
+Deliver exactly this Reviewer Console + Policy QC slice, integrated with your current Order Shell, so reviewers can run policy checks, discuss changes, override with reasons, and sign off independently from appraisers—complete with diffs and auditable records.

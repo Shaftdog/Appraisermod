@@ -1,0 +1,150 @@
+{
+  "meta": {
+    "id": "default-shop-policy",
+    "name": "Default Shop Policy",
+    "version": "2025.09.0",
+    "updatedAt": "2025-09-14T00:00:00Z",
+    "enabled": true
+  },
+  "rules": [
+    {
+      "id": "TIME_BASIS_MISMATCH",
+      "name": "Time Adjustment Basis Mismatch",
+      "scope": "market",
+      "severity": "major",
+      "selector": "$.market.timeAdjust.basis",
+      "operator": "neq",
+      "value": "$.market.settings.metric",
+      "messageTemplate": "Time adjustment basis ({actual}) differs from analysis basis ({expected}).",
+      "autofix": {
+        "action": "set",
+        "path": "$.market.timeAdjust.basis",
+        "value": "$.market.settings.metric"
+      },
+      "links": ["https://policy.example.com/time-adjustments"],
+      "enabled": true
+    },
+    {
+      "id": "TIME_ADJ_MAGNITUDE",
+      "name": "Time Adjustment Magnitude Guardrail",
+      "scope": "market",
+      "severity": "major",
+      "selector": "$.market.timeAdjust.pctPerMonth",
+      "operator": "gt",
+      "value": 0.015,
+      "messageTemplate": "Time adj exceeds ±1.5%/mo. Provide narrative or reduce.",
+      "links": ["https://policy.example.com/time-adjustments#magnitude"],
+      "enabled": true
+    },
+    {
+      "id": "SPARSE_MARKET_DATA",
+      "name": "Sparse Market Data",
+      "scope": "market",
+      "severity": "major",
+      "selector": "$.market.mcr.sampleCounts.sold",
+      "operator": "lt",
+      "value": 6,
+      "messageTemplate": "Insufficient market data: only {actual} sales found, minimum 6 required.",
+      "links": ["https://policy.example.com/market-data#sample-size"],
+      "enabled": true
+    },
+    {
+      "id": "COMP_OUTSIDE_POLYGON",
+      "name": "Comp Outside Polygon",
+      "scope": "comp",
+      "severity": "minor",
+      "selector": "$.comps.primary[*].isInsidePolygon",
+      "operator": "eq",
+      "value": false,
+      "messageTemplate": "Primary comp is outside market polygon. Provide rationale for inclusion.",
+      "links": ["https://policy.example.com/comp-selection#polygon"],
+      "enabled": true
+    },
+    {
+      "id": "GLA_ADJUSTMENT_CAP",
+      "name": "GLA Adjustment Cap",
+      "scope": "adjustments",
+      "severity": "major",
+      "selector": "$.adjustments.attrs[?(@.key=='gla')].adjustment",
+      "operator": "gt",
+      "value": 0.15,
+      "messageTemplate": "GLA adjustment exceeds 15% of sale price. Consider different comp or provide explanation.",
+      "links": ["https://policy.example.com/adjustments#caps"],
+      "enabled": true
+    },
+    {
+      "id": "PHOTO_QC_UNRESOLVED",
+      "name": "Unresolved Photo QC Issues",
+      "scope": "photo",
+      "severity": "major",
+      "selector": "$.photos.qc.unresolvedDetections",
+      "operator": "gt",
+      "value": 0,
+      "messageTemplate": "Unresolved face detections or missing required photo categories.",
+      "autofix": {
+        "action": "recompute",
+        "path": "$.photos.qc"
+      },
+      "links": ["https://policy.example.com/photo-qc"],
+      "enabled": true
+    },
+    {
+      "id": "CONTRADICTORY_INDICATORS",
+      "name": "Contradictory Market Indicators",
+      "scope": "market",
+      "severity": "minor",
+      "selector": "$.market.mcr",
+      "operator": "regex",
+      "value": "trend_positive_sp_low_dom_high",
+      "messageTemplate": "Market shows rising trend (+{trend}%/mo) but low SP/LP ratio ({spToLp}%) and high DOM ({dom} days). Review for consistency.",
+      "links": ["https://policy.example.com/market-analysis#contradictory"],
+      "enabled": true
+    },
+    {
+      "id": "MISSING_REQUIRED_PHOTOS",
+      "name": "Missing Required Photo Categories",
+      "scope": "photo",
+      "severity": "major",
+      "selector": "$.photos.categories",
+      "operator": "notIn",
+      "value": ["Street", "Front", "Kitchen", "Living"],
+      "messageTemplate": "Missing required photo categories. Ensure all mandatory photos are captured.",
+      "links": ["https://policy.example.com/photo-requirements"],
+      "enabled": true
+    },
+    {
+      "id": "EXTREME_CONDITION_ADJUSTMENT",
+      "name": "Extreme Condition Adjustment",
+      "scope": "adjustments",
+      "severity": "minor",
+      "selector": "$.adjustments.attrs[?(@.key=='condition')].adjustment",
+      "operator": "gt",
+      "value": 0.10,
+      "messageTemplate": "Condition adjustment exceeds 10%. Verify comp condition rating and provide detailed explanation.",
+      "links": ["https://policy.example.com/adjustments#condition"],
+      "enabled": true
+    },
+    {
+      "id": "STALE_MARKET_DATA",
+      "name": "Stale Market Data",
+      "scope": "market",
+      "severity": "minor",
+      "selector": "$.market.settings.effectiveDateISO",
+      "operator": "lt",
+      "value": "90_days_ago",
+      "messageTemplate": "Market analysis is over 90 days old. Consider refreshing market data.",
+      "autofix": {
+        "action": "recompute",
+        "path": "$.market.mcr"
+      },
+      "links": ["https://policy.example.com/market-data#freshness"],
+      "enabled": true
+    }
+  ],
+  "riskMap": {
+    "critical": "red",
+    "major": "red", 
+    "minor": "yellow",
+    "info": "green"
+  }
+}
