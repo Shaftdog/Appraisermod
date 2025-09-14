@@ -34,7 +34,7 @@ import {
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { ReviewItem, RuleHit } from "@/../../types/review";
+import type { ReviewItem, RuleHit } from "../../../types/review";
 
 export function OrderReview() {
   const { orderId } = useParams<{ orderId: string }>();
@@ -264,7 +264,7 @@ export function OrderReview() {
                     {hit.suggestion && (
                       <div className="bg-muted/50 p-3 rounded-md">
                         <p className="text-xs text-muted-foreground mb-1">Suggested fix:</p>
-                        <p className="text-sm">{hit.suggestion}</p>
+                        <p className="text-sm">Action: {hit.suggestion.action}{hit.suggestion.path && `, Path: ${hit.suggestion.path}`}{hit.suggestion.value !== undefined && `, Value: ${hit.suggestion.value}`}</p>
                       </div>
                     )}
                   </CardContent>

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'wouter';
 import { LeftNavTabs } from '@/components/LeftNavTabs';
+import { ReviewerFeedbackBanner } from '@/components/reviewer/ReviewerFeedbackBanner';
 import { Order } from '@/types';
 
 interface OrderLayoutProps {
@@ -42,7 +43,12 @@ export default function OrderLayout({ children }: OrderLayoutProps) {
     <div className="min-h-screen flex">
       <LeftNavTabs order={order} />
       <main className="flex-1 lg:ml-0">
-        {children}
+        <div className="p-6">
+          <ReviewerFeedbackBanner orderId={orderId!} />
+          <div className="p-0">
+            {children}
+          </div>
+        </div>
       </main>
     </div>
   );
