@@ -513,6 +513,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update tab data (e.g., subject, market, etc.)
+  app.put("/api/orders/:id/tabs/:tab", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const tabKey = req.params.tab as TabKey;
+      
+      if (!validateOrderId(orderId)) {
+        return res.status(400).json({ message: 'Invalid order ID' });
+      }
+
+      // Verify user has access to this order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Get current order to merge data
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+
+      // Validate tab exists
+      if (!order.tabs[tabKey]) {
+        return res.status(404).json({ message: 'Tab not found' });
+      }
+
+      // Validate input data based on tab
+      let validatedData = req.body;
+      if (tabKey === 'subject') {
+        // Basic validation for subject tab fields
+        const subjectUpdateSchema = z.object({
+          address: z.string().optional(),
+          yearBuilt: z.string().optional(),
+          gla: z.string().optional(),
+          bedrooms: z.string().optional(),
+          bathrooms: z.string().optional(),
+          lotSize: z.string().optional(),
+          legalDescription: z.string().optional(),
+          zoning: z.string().optional()
+        });
+        validatedData = subjectUpdateSchema.parse(req.body);
+      }
+
+      // Update the tab's currentData
+      const updatedTabs = {
+        ...order.tabs,
+        [tabKey]: {
+          ...order.tabs[tabKey],
+          currentData: {
+            ...order.tabs[tabKey].currentData,
+            ...validatedData
+          }
+        }
+      };
+
+      const updatedOrder = await storage.updateOrder(orderId, {
+        tabs: updatedTabs
+      });
+
+      res.json(updatedOrder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid input data', errors: error.errors });
+      }
+      console.error("Error updating tab:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Sign-off tab
   app.post("/api/orders/:id/tabs/:tab/signoff", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
@@ -2446,8 +2516,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ====================== ATTOM DATA ROUTES ======================
   
-  // Import ATTOM modules
-  const { importClosedSales, importParcels, importSubjectByAddress } = require('./attom/importer');
+  // Import ATTOM modules - dynamic imports to handle async loading
+  const { importClosedSales, importParcels, importSubjectByAddress } = await import('./attom/importer');
   
   // ATTOM Import Routes
   app.post("/api/attom/import/closed-sales", requireAuth, async (req: AuthenticatedRequest, res) => {
