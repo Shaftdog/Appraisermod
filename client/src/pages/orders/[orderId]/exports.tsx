@@ -9,10 +9,17 @@ import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 
+// Delivery system imports
+import { DeliveryDrawer } from '@/components/delivery/DeliveryDrawer';
+import { DeliveryBadges } from '@/components/delivery/DeliveryBadges';
+import { Button } from '@/components/ui/button';
+import { Download, FileText, Grid } from 'lucide-react';
+
 export default function Exports() {
   const params = useParams<{ orderId: string }>();
   const orderId = params?.orderId;
   const [showVersions, setShowVersions] = useState(false);
+  const [showDeliveryDrawer, setShowDeliveryDrawer] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -78,6 +85,16 @@ export default function Exports() {
               lastReviewedAt={tab.qc.lastReviewedAt}
             />
           </div>
+          
+          {/* Delivery Status */}
+          <div className="mt-4">
+            <h4 className="text-sm font-medium text-foreground mb-2">Delivery Status</h4>
+            <DeliveryBadges 
+              orderId={orderId!} 
+              onRequestDelivery={() => setShowDeliveryDrawer(true)}
+              className="flex items-center gap-2"
+            />
+          </div>
         </div>
 
         <SignoffPanel
@@ -90,15 +107,49 @@ export default function Exports() {
 
       <div className="bg-card border border-border rounded-lg p-6">
         <h3 className="font-medium text-foreground mb-4">Export Options</h3>
-        <div className="grid lg:grid-cols-2 gap-4">
+        <div className="grid lg:grid-cols-2 gap-4 mb-6">
           <button className="p-4 border border-border rounded-lg hover:bg-muted transition-colors text-left" data-testid="button-export-pdf">
-            <div className="font-medium text-foreground mb-1">PDF Report</div>
+            <div className="flex items-center gap-2 mb-1">
+              <FileText className="h-4 w-4 text-muted-foreground" />
+              <div className="font-medium text-foreground">PDF Report</div>
+            </div>
             <div className="text-sm text-muted-foreground">Complete appraisal report</div>
           </button>
           <button className="p-4 border border-border rounded-lg hover:bg-muted transition-colors text-left" data-testid="button-export-excel">
-            <div className="font-medium text-foreground mb-1">Excel Summary</div>
+            <div className="flex items-center gap-2 mb-1">
+              <Grid className="h-4 w-4 text-muted-foreground" />
+              <div className="font-medium text-foreground">Excel Summary</div>
+            </div>
             <div className="text-sm text-muted-foreground">Data export for analysis</div>
           </button>
+        </div>
+
+        {/* Delivery Options */}
+        <div className="border-t border-border pt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="font-medium text-foreground">Professional Delivery</h4>
+            <Button
+              onClick={() => setShowDeliveryDrawer(true)}
+              size="sm"
+              data-testid="button-request-delivery"
+            >
+              <Download className="h-3 w-3 mr-1" />
+              Request Delivery
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Generate MISMO UAD XML, package photos, and create complete workfile deliveries for clients
+          </p>
+          
+          {/* Recent deliveries summary */}
+          <div className="bg-muted/50 rounded-lg p-3">
+            <h5 className="text-xs font-medium text-foreground mb-2">Recent Deliveries</h5>
+            <DeliveryBadges 
+              orderId={orderId!} 
+              onRequestDelivery={() => setShowDeliveryDrawer(true)}
+              className="flex items-center gap-2"
+            />
+          </div>
         </div>
       </div>
 
@@ -110,6 +161,13 @@ export default function Exports() {
           onClose={() => setShowVersions(false)}
         />
       )}
+
+      {/* Delivery Drawer */}
+      <DeliveryDrawer
+        orderId={orderId!}
+        isOpen={showDeliveryDrawer}
+        onClose={() => setShowDeliveryDrawer(false)}
+      />
     </div>
   );
 }
