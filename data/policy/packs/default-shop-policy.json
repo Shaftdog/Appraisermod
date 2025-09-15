@@ -139,6 +139,45 @@
       },
       "links": ["https://policy.example.com/market-data#freshness"],
       "enabled": true
+    },
+    {
+      "id": "HILO_MISSING_RESULT",
+      "name": "Hi-Lo Analysis Missing",
+      "scope": "comp",
+      "severity": "major",
+      "selector": "$.hilo.result",
+      "operator": "notExists",
+      "messageTemplate": "Hi-Lo analysis is missing but appraiser has proceeded to adjustments/reconciliation. Complete Hi-Lo analysis for proper comp selection.",
+      "autofix": {
+        "action": "recompute",
+        "path": "$.hilo"
+      },
+      "links": ["https://policy.example.com/comp-selection#hilo"],
+      "enabled": true
+    },
+    {
+      "id": "HILO_PRIMARY_OUTSIDE_BOX",
+      "name": "Hi-Lo Primary Outside Range",
+      "scope": "comp",
+      "severity": "major",
+      "selector": "$.comps.primary[*]",
+      "operator": "regex",
+      "value": "hilo_primary_outside_box",
+      "messageTemplate": "Primary comp {compId} has time-adjusted value outside Hi-Lo range (${value} not in ${lo}-${hi}). Provide rationale or select different primary.",
+      "links": ["https://policy.example.com/comp-selection#hilo-primaries"],
+      "enabled": true
+    },
+    {
+      "id": "HILO_PPSF_MISSING_GLA",
+      "name": "Hi-Lo $/SF Analysis Missing GLA",
+      "scope": "comp",
+      "severity": "minor",
+      "selector": "$.hilo.result.ranked[*]",
+      "operator": "regex",
+      "value": "missing_gla_for_ppsf",
+      "messageTemplate": "Hi-Lo analysis on $/SF basis but comp {compId} lacks GLA data. Verify GLA or switch to sale price basis.",
+      "links": ["https://policy.example.com/comp-selection#gla-requirements"],
+      "enabled": true
     }
   ],
   "riskMap": {

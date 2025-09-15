@@ -1,4 +1,5 @@
 import { type User, type PublicUser, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
+import { type HiLoState, type HiLoSettings } from "../types/hilo";
 import { type HabuState, type HabuInputs, type HabuResult, type ZoningData } from "@shared/habu";
 import { isPointInPolygon } from "@shared/geo";
 import { type ReviewItem, type RuleHit, type ReviewQueueItem, type Thread, type Comment, type DiffSummary, type Risk } from "../types/review";
@@ -91,6 +92,12 @@ export interface IStorage {
   updateAttributeOverride(orderId: string, attrKey: string, value: number, source?: 'blend' | 'manual', note?: string): Promise<AttrAdjustment>;
   applyAdjustments(orderId: string): Promise<AdjustmentsBundle>;
   getAdjustmentsBundle(orderId: string): Promise<AdjustmentsBundle | null>;
+
+  // Hi-Lo methods
+  getHiLoState(orderId: string): Promise<HiLoState>;
+  saveHiLoSettings(orderId: string, settings: HiLoSettings): Promise<HiLoState>;
+  computeHiLo(orderId: string): Promise<HiLoState>;
+  applyHiLo(orderId: string, primaries: string[], listingPrimaries: string[]): Promise<void>;
 
   // Review & Policy methods
   runPolicyCheck(orderId: string): Promise<{ hits: RuleHit[]; overallRisk: Risk }>;
@@ -2396,6 +2403,204 @@ export class DatabaseStorage implements IStorage {
     };
 
     return mockZoning;
+  }
+
+  // ===== HI-LO METHODS =====
+
+  async getHiLoState(orderId: string): Promise<HiLoState> {
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'hilo', 'state.json');
+    
+    try {
+      const data = await fsPromises.readFile(filePath, 'utf8');
+      return JSON.parse(data);
+    } catch (error) {
+      // Return default state if file doesn't exist
+      const { DEFAULT_HILO_SETTINGS } = await import('../types/hilo.defaults');
+      return {
+        orderId,
+        settings: DEFAULT_HILO_SETTINGS,
+        updatedAt: new Date().toISOString()
+      };
+    }
+  }
+
+  async saveHiLoSettings(orderId: string, settings: HiLoSettings): Promise<HiLoState> {
+    const state: HiLoState = {
+      orderId,
+      settings,
+      updatedAt: new Date().toISOString()
+    };
+
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'hilo', 'state.json');
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+    
+    // Atomic write
+    const tmpPath = filePath + '.tmp';
+    await fsPromises.writeFile(tmpPath, JSON.stringify(state, null, 2), 'utf8');
+    await fsPromises.rename(tmpPath, filePath);
+
+    return state;
+  }
+
+  async computeHiLo(orderId: string): Promise<HiLoState> {
+    const state = await this.getHiLoState(orderId);
+    const { settings } = state;
+
+    // Load required data
+    const timeAdjustments = await this.getTimeAdjustments(orderId);
+    if (!timeAdjustments.effectiveDateISO) {
+      throw new Error('Market time adjustment config missing - effective date required for Hi-Lo');
+    }
+
+    const { comps } = await this.getCompsWithScoring(orderId);
+    const subject = await this.getSubject(orderId);
+    const selection = await this.getCompSelection(orderId);
+
+    // Build candidate pool from existing comps
+    const { rankCandidatesForHiLo, calculateCenterValue } = await import('../shared/hilo-utils');
+    
+    const candidates = comps
+      .filter(comp => {
+        // Apply status filter if we have type information
+        if (settings.filters.statuses.length > 0) {
+          // Assume all comps are 'sold' unless we have other type data
+          return settings.filters.statuses.includes('sold');
+        }
+        return true;
+      })
+      .map(comp => ({
+        id: comp.id,
+        type: 'sale' as const, // Most comps are sales
+        salePrice: comp.salePrice,
+        saleDate: comp.saleDate,
+        gla: comp.gla,
+        insidePolygon: comp.isInsidePolygon || false,
+        distanceMiles: comp.distanceMiles,
+        monthsSinceSale: comp.monthsSinceSale,
+        quality: comp.quality,
+        condition: comp.condition
+      }));
+
+    if (candidates.length === 0) {
+      throw new Error('No candidates available for Hi-Lo computation');
+    }
+
+    // Calculate center value
+    const context = {
+      effectiveDateISO: timeAdjustments.effectiveDateISO,
+      basis: timeAdjustments.basis,
+      pctPerMonth: timeAdjustments.pctPerMonth,
+      settings,
+      subjectGla: subject.gla,
+      subjectQuality: subject.quality,
+      subjectCondition: subject.condition
+    };
+
+    const center = calculateCenterValue(
+      candidates,
+      settings.centerBasis,
+      context,
+      selection.primary
+    );
+
+    // Rank candidates and select
+    const result = rankCandidatesForHiLo(candidates, {
+      ...context,
+      center,
+      boxPct: settings.boxPct
+    });
+
+    // Build Hi-Lo result
+    const hiLoResult = {
+      range: {
+        center,
+        lo: center * (1 - settings.boxPct / 100),
+        hi: center * (1 + settings.boxPct / 100),
+        effectiveDateISO: timeAdjustments.effectiveDateISO,
+        basis: timeAdjustments.basis
+      },
+      ranked: result.ranked,
+      selectedSales: result.selectedSales,
+      selectedListings: result.selectedListings,
+      primaries: result.primaries,
+      listingPrimaries: result.listingPrimaries,
+      generatedAt: new Date().toISOString()
+    };
+
+    // Update state with result
+    const updatedState: HiLoState = {
+      ...state,
+      result: hiLoResult,
+      updatedAt: new Date().toISOString()
+    };
+
+    // Save state
+    const filePath = path.join(process.cwd(), 'data', 'orders', orderId, 'hilo', 'state.json');
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+    
+    const tmpPath = filePath + '.tmp';
+    await fsPromises.writeFile(tmpPath, JSON.stringify(updatedState, null, 2), 'utf8');
+    await fsPromises.rename(tmpPath, filePath);
+
+    return updatedState;
+  }
+
+  async applyHiLo(orderId: string, primaries: string[], listingPrimaries: string[]): Promise<void> {
+    const state = await this.getHiLoState(orderId);
+    if (!state.result) {
+      throw new Error('Hi-Lo result not available - run compute first');
+    }
+
+    // Get current selection to preserve locked comps
+    const selection = await this.getCompSelection(orderId);
+    const { comps } = await this.getCompsWithScoring(orderId);
+
+    // Build new primary array, respecting locks
+    const newPrimaries: string[] = [];
+    const lockedPrimaries = selection.primary.filter(id => selection.locked.includes(id));
+
+    // Add locked primaries first (keep their positions if reasonable)
+    for (const lockedId of lockedPrimaries) {
+      if (newPrimaries.length < 3) {
+        newPrimaries.push(lockedId);
+      }
+    }
+
+    // Fill remaining slots with Hi-Lo primaries
+    for (const primaryId of primaries) {
+      if (!newPrimaries.includes(primaryId) && newPrimaries.length < 3) {
+        newPrimaries.push(primaryId);
+      }
+    }
+
+    // Update comp selection
+    await this.updateCompSelection(orderId, {
+      primary: newPrimaries
+    });
+
+    // Save listing primaries if we have a place for them
+    const listingsPath = path.join(process.cwd(), 'data', 'orders', orderId, 'comps', 'selected-listings.json');
+    await fsPromises.mkdir(path.dirname(listingsPath), { recursive: true });
+    
+    const tmpPath = listingsPath + '.tmp';
+    await fsPromises.writeFile(tmpPath, JSON.stringify({ listingPrimaries, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+    await fsPromises.rename(tmpPath, listingsPath);
+
+    // Emit audit event
+    const auditPath = path.join(process.cwd(), 'data', 'ops', 'telemetry.jsonl');
+    const auditEvent = {
+      action: 'hilo.apply',
+      orderId,
+      primaries: newPrimaries,
+      listingPrimaries,
+      timestamp: new Date().toISOString()
+    };
+    
+    try {
+      await fsPromises.appendFile(auditPath, JSON.stringify(auditEvent) + '\n', 'utf8');
+    } catch (error) {
+      console.warn('Failed to write audit event:', error);
+    }
   }
 }
 

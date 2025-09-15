@@ -20,6 +20,7 @@ interface CompCardProps {
   showSwap?: boolean;
   timeAdjustments?: TimeAdjustments;
   attributeAdjustments?: CompAdjustmentLine;
+  hiloStatus?: { insideBox: boolean; isPrimary: boolean };
   className?: string;
   onLock?: (compId: string, locked: boolean) => void;
   onPromote?: (compId: string) => void;
@@ -35,6 +36,7 @@ export function CompCard({
   showSwap = false,
   timeAdjustments,
   attributeAdjustments,
+  hiloStatus,
   className,
   onLock,
   onPromote,
@@ -141,6 +143,31 @@ export function CompCard({
                   <CheckCircle className="h-3 w-3 mr-1" />
                   In Market
                 </Badge>
+              )}
+              {hiloStatus && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge 
+                        variant={hiloStatus.insideBox ? "secondary" : "outline"} 
+                        className={cn(
+                          "text-xs",
+                          hiloStatus.insideBox 
+                            ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" 
+                            : "text-red-600 dark:text-red-400"
+                        )}
+                      >
+                        Hi-Lo {hiloStatus.insideBox ? '✓' : '✕'}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>
+                        {hiloStatus.insideBox ? 'Inside Hi-Lo range' : 'Outside Hi-Lo range'}
+                        {hiloStatus.isPrimary && ' • Hi-Lo Primary'}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
               {comp.source === 'attom' && (
                 <TooltipProvider>

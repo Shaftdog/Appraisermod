@@ -7,6 +7,7 @@ import { VersionDiffViewer } from '@/components/VersionDiffViewer';
 import { Toolbar } from '@/components/Toolbar';
 import { WeightsPanel } from '@/components/weights/WeightsPanel';
 import { CompList } from '@/components/comps/CompList';
+import { HiLoPanel } from '@/components/hilo/HiLoPanel';
 import { Order } from '@/types';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +20,7 @@ export default function Comps() {
   const orderId = params?.orderId;
   const [showVersions, setShowVersions] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [showHiLo, setShowHiLo] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -124,6 +126,15 @@ export default function Comps() {
         <WeightsPanel 
           orderId={orderId!} 
           onWeightsApplied={handleWeightsApplied}
+        />
+      </div>
+
+      {/* Hi-Lo Analysis Panel */}
+      <div className="mb-6">
+        <HiLoPanel 
+          orderId={orderId!} 
+          isOpen={showHiLo}
+          onToggle={() => setShowHiLo(!showHiLo)}
         />
       </div>
 

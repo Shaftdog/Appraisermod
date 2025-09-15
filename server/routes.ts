@@ -1992,6 +1992,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ==========================================
+  // HI-LO API ENDPOINTS
+  // ==========================================
+
+  // Get Hi-Lo state
+  app.get("/api/orders/:id/hilo", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Verify user access to order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const state = await storage.getHiLoState(orderId);
+      res.json(state);
+    } catch (error) {
+      console.error('Error getting Hi-Lo state:', error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update Hi-Lo settings
+  app.put("/api/orders/:id/hilo/settings", requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Verify user access to order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Validate Hi-Lo settings
+      const hiloSettingsSchema = z.object({
+        centerBasis: z.enum(['medianTimeAdj', 'weightedPrimaries', 'model']),
+        boxPct: z.number().min(5).max(20),
+        maxSales: z.number().min(10).max(15),
+        maxListings: z.number().min(5).max(10),
+        filters: z.object({
+          insidePolygonOnly: z.boolean(),
+          statuses: z.array(z.enum(['sold', 'active', 'pending', 'expired']))
+        }),
+        weights: z.object({
+          distance: z.number().min(0).max(1),
+          recency: z.number().min(0).max(1),
+          gla: z.number().min(0).max(1),
+          quality: z.number().min(0).max(1),
+          condition: z.number().min(0).max(1),
+          loc: z.number().min(0).max(1)
+        })
+      });
+
+      const settings = hiloSettingsSchema.parse(req.body);
+      const state = await storage.saveHiLoSettings(orderId, settings);
+      
+      res.json(state);
+    } catch (error) {
+      console.error('Error saving Hi-Lo settings:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid Hi-Lo settings", 
+          errors: error.errors 
+        });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Compute Hi-Lo
+  app.post("/api/orders/:id/hilo/compute", requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Verify user access to order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      const state = await storage.computeHiLo(orderId);
+      res.json(state);
+    } catch (error) {
+      console.error('Error computing Hi-Lo:', error);
+      if (error instanceof Error) {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Apply Hi-Lo primaries
+  app.post("/api/orders/:id/hilo/apply", requireAuth, limitHandler(10, 60_000), requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      // Verify user access to order
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+
+      // Validate apply request
+      const applySchema = z.object({
+        primaries: z.array(z.string()).max(3),
+        listingPrimaries: z.array(z.string()).max(2)
+      });
+
+      const { primaries, listingPrimaries } = applySchema.parse(req.body);
+      await storage.applyHiLo(orderId, primaries, listingPrimaries);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error applying Hi-Lo:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid apply request", 
+          errors: error.errors 
+        });
+      }
+      if (error instanceof Error) {
+        return res.status(400).json({ message: error.message });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ==========================================
   // DELIVERY & EXPORTS API ENDPOINTS
   // ==========================================
 
@@ -2028,12 +2156,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deliveryId = `delivery-${validatedRequest.orderId}-${Date.now()}`;
       
       // Get order components needed for delivery
-      const [subject, comps, adjustmentsBundle, photos, habuState] = await Promise.all([
+      const [subject, comps, adjustmentsBundle, photos, habuState, hiloState] = await Promise.all([
         storage.getSubject(validatedRequest.orderId),
         storage.getCompsWithScoring(validatedRequest.orderId).then(result => result.comps),
         storage.getAdjustmentsBundle(validatedRequest.orderId),
         storage.getPhotos(validatedRequest.orderId),
-        storage.getHabuState(validatedRequest.orderId).catch(() => null) // Optional HABU data
+        storage.getHabuState(validatedRequest.orderId).catch(() => null), // Optional HABU data
+        storage.getHiLoState(validatedRequest.orderId).catch(() => null) // Optional Hi-Lo data
       ]);
 
       // Create delivery package directory
@@ -2090,7 +2219,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             effectiveDate: order.dueDate || new Date().toISOString(),
             intendedUse: 'Purchase',
             reconciledValue: (adjustmentsBundle as any)?.finalValue,
-            habuState: habuState // HABU integration for MISMO XML
+            habuState: habuState, // HABU integration for MISMO XML
+            hiloState: hiloState // Hi-Lo integration for MISMO XML
           };
 
           const { xml, validation } = buildUAD26XML(uadInput);

@@ -43,6 +43,7 @@ interface UADInput {
   intendedUse: string;
   reconciledValue?: number;
   habuState?: HabuState | null; // HABU integration
+  hiloState?: any | null; // Hi-Lo integration
 }
 
 interface ValidationResult {
@@ -163,6 +164,15 @@ export function buildUAD26XML(input: UADInput): UADResult {
     validation.warnings.push('HABU (Highest and Best Use) analysis not performed');
   }
 
+  // Hi-Lo validation and warnings
+  if (input.hiloState) {
+    if (!input.hiloState.result) {
+      validation.warnings.push('Hi-Lo analysis incomplete - no results available');
+    }
+  } else {
+    validation.warnings.push('Hi-Lo comp selection analysis not performed');
+  }
+
   validation.isValid = validation.errors.length === 0;
 
   // Build XML structure
@@ -172,6 +182,7 @@ export function buildUAD26XML(input: UADInput): UADResult {
       '@_xmlns': 'http://www.mismo.org/residential/2009/schemas',
       '@_xmlns:xlink': 'http://www.w3.org/1999/xlink',
       '@_xmlns:habu': 'urn:appraisal:habu:v1',
+      '@_xmlns:hilo': 'urn:appraisal:hilo:v1',
       'ABOUT_VERSIONS': {
         'ABOUT_VERSION': {
           '@_DataVersionIdentifier': '1.0',
@@ -232,9 +243,10 @@ export function buildUAD26XML(input: UADInput): UADResult {
                       // Native MISMO HBU field in APPRAISAL_DETAIL
                       'HighestAndBestUseAnalyzedIndicator': input.habuState?.result ? 'true' : 'false'
                     },
-                    // MISMO-compliant EXTENSION for detailed HABU data
-                    'EXTENSION': input.habuState?.result ? {
-                      'habu:HighestBestUseAnalysis': buildHabuSection(input.habuState)
+                    // MISMO-compliant EXTENSION for detailed HABU and Hi-Lo data
+                    'EXTENSION': (input.habuState?.result || input.hiloState?.result) ? {
+                      ...(input.habuState?.result && { 'habu:HighestBestUseAnalysis': buildHabuSection(input.habuState) }),
+                      ...(input.hiloState?.result && { 'hilo:CompSelectionAnalysis': buildHiLoSection(input.hiloState) })
                     } : undefined
                   }
                 }
@@ -353,4 +365,45 @@ export function validateHabuForExport(habuState: HabuState | null): { isValid: b
   }
 
   return { isValid: issues.length === 0, issues };
+}
+
+function buildHiLoSection(hiloState: any): any {
+  if (!hiloState.result) return {};
+
+  const { range, ranked, selectedSales, selectedListings, primaries, listingPrimaries } = hiloState.result;
+
+  return {
+    'hilo:AnalysisType': 'Hi-Lo Range Boxing',
+    'hilo:EffectiveDate': range.effectiveDateISO.split('T')[0],
+    'hilo:Range': {
+      'hilo:Center': range.center,
+      'hilo:Low': range.lo,
+      'hilo:High': range.hi,
+      'hilo:BoxPercent': hiloState.settings.boxPct,
+      'hilo:Basis': range.basis
+    },
+    'hilo:Selection': {
+      'hilo:SelectedSales': selectedSales.length,
+      'hilo:SelectedListings': selectedListings.length,
+      'hilo:TotalCandidates': ranked.length,
+      'hilo:InsideBoxCount': ranked.filter((r: any) => r.insideBox).length
+    },
+    'hilo:Primaries': {
+      'hilo:Primary': primaries.map((compId: string, index: number) => ({
+        '@_Rank': index + 1,
+        'hilo:CompId': compId,
+        'hilo:Source': 'hi-lo-selection'
+      }))
+    },
+    'hilo:Settings': {
+      'hilo:CenterBasis': hiloState.settings.centerBasis,
+      'hilo:MaxSales': hiloState.settings.maxSales,
+      'hilo:MaxListings': hiloState.settings.maxListings,
+      'hilo:InsidePolygonOnly': hiloState.settings.filters.insidePolygonOnly
+    },
+    'hilo:AnalysisMetadata': {
+      'hilo:GeneratedAt': hiloState.result.generatedAt,
+      'hilo:Version': '1.0'
+    }
+  };
 }

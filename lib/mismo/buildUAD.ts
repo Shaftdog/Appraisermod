@@ -63,6 +63,8 @@ export interface UADInput {
   narrative?: string;
   appraiserSignedAt?: string;
   reviewerSignedAt?: string;
+  habuState?: any; // HABU state for HBU analysis
+  hiloState?: any; // Hi-Lo state for comp selection analysis
 }
 
 export interface ValidationResult {
