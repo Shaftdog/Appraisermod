@@ -3,6 +3,7 @@ import { useParams } from 'wouter';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { EnhancedMarketMap } from '@/components/map/EnhancedMarketMap';
+import { TrendDashboard } from '@/components/market/TrendDashboard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -119,15 +120,15 @@ export default function EnhancedMarketAnalysisPage() {
     }
   });
 
-  // Compute trend mutation
+  // Compute trend mutation (updated to accept method parameter)
   const computeTrendMutation = useMutation({
-    mutationFn: async (submarketId: string) => {
+    mutationFn: async ({ submarketId, method }: { submarketId: string; method: 'linear' | 'polynomial' }) => {
       return apiRequest(`/api/orders/${orderId}/market/trends/compute`, {
         method: 'POST',
         body: JSON.stringify({
           submarketId,
           timeRange: { monthsBack: 12, startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString() },
-          method: 'linear'
+          method
         })
       });
     },
@@ -233,74 +234,20 @@ export default function EnhancedMarketAnalysisPage() {
 
         {/* Trends Tab */}
         <TabsContent value="trends" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Market Trends Analysis</CardTitle>
-              <CardDescription>
-                Linear regression analysis of price trends, DOM, and absorption rates per submarket
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {submarkets.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  Create submarkets first to analyze trends
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {submarkets.map((submarket) => {
-                    const submarketTrends = trends.filter(t => t.submarketId === submarket.id);
-                    const latestTrend = submarketTrends[0];
-
-                    return (
-                      <div key={submarket.id} className="border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <h3 className="font-semibold">{submarket.name}</h3>
-                          <Button
-                            size="sm"
-                            onClick={() => computeTrendMutation.mutate(submarket.id)}
-                            disabled={computeTrendMutation.isPending}
-                            data-testid={`button-compute-trend-${submarket.id}`}
-                          >
-                            {computeTrendMutation.isPending ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              'Compute Trend'
-                            )}
-                          </Button>
-                        </div>
-
-                        {latestTrend ? (
-                          <div className="grid grid-cols-3 gap-4 text-sm">
-                            <div>
-                              <div className="text-gray-500">Monthly Change</div>
-                              <div className="font-semibold text-lg">
-                                {latestTrend.trendAnalysis.monthlyChange > 0 ? '+' : ''}
-                                {latestTrend.trendAnalysis.monthlyChange.toFixed(2)}%
-                              </div>
-                            </div>
-                            <div>
-                              <div className="text-gray-500">R² Confidence</div>
-                              <div className="font-semibold text-lg">
-                                {latestTrend.trendAnalysis.r2.toFixed(2)}
-                              </div>
-                            </div>
-                            <div>
-                              <div className="text-gray-500">Sample Size</div>
-                              <div className="font-semibold text-lg">
-                                {latestTrend.sampleSize} sales
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-500">No trend analysis available</div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {submarkets.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center text-gray-500">
+                Create submarkets first to analyze trends
+              </CardContent>
+            </Card>
+          ) : (
+            <TrendDashboard
+              submarkets={submarkets}
+              trends={trends}
+              onComputeTrend={(submarketId, method) => computeTrendMutation.mutate({ submarketId, method })}
+              isComputing={computeTrendMutation.isPending}
+            />
+          )}
         </TabsContent>
 
         {/* Adjustments Tab */}
