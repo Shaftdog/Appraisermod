@@ -2873,9 +2873,12 @@ export class DatabaseStorage implements IStorage {
       .filter(r => r.livingArea && r.salePrice)
       .map(r => (r.salePrice || 0) / (r.livingArea || 1));
     
-    // Simple linear regression for trend
+    // Perform regression analysis based on requested method
     const monthlyData = this.groupByMonth(soldRecords);
-    const { slope, r2, coefficients } = this.linearRegression(monthlyData);
+    const method = params.method || 'linear';
+    const { slope, r2, coefficients } = method === 'polynomial' 
+      ? this.polynomialRegression(monthlyData)
+      : this.linearRegression(monthlyData);
     
     const trend: SubmarketTrend = {
       id,
@@ -2893,7 +2896,7 @@ export class DatabaseStorage implements IStorage {
         }
       },
       trendAnalysis: {
-        method: params.method || 'linear',
+        method,
         monthlyChange: slope * 100, // Convert to percentage
         r2,
         coefficients,
@@ -3384,6 +3387,73 @@ export class DatabaseStorage implements IStorage {
     const r2 = 1 - (ssResidual / ssTotal);
     
     return { slope, r2, coefficients: [intercept, slope] };
+  }
+
+  private polynomialRegression(data: Array<{ month: number; avgPrice: number }>, degree = 2): { slope: number; r2: number; coefficients: number[] } {
+    if (data.length < degree + 1) return { slope: 0, r2: 0, coefficients: Array(degree + 1).fill(0) };
+    
+    // For quadratic (degree 2): y = a + bx + cx²
+    // Normal equations matrix form:
+    // | n      Σx     Σx²  |   | a |   | Σy   |
+    // | Σx     Σx²    Σx³  | × | b | = | Σxy  |
+    // | Σx²    Σx³    Σx⁴  |   | c |   | Σx²y |
+    
+    const n = data.length;
+    
+    // Build sums for normal equations
+    const sumX = data.reduce((sum, d) => sum + d.month, 0);
+    const sumX2 = data.reduce((sum, d) => sum + Math.pow(d.month, 2), 0);
+    const sumX3 = data.reduce((sum, d) => sum + Math.pow(d.month, 3), 0);
+    const sumX4 = data.reduce((sum, d) => sum + Math.pow(d.month, 4), 0);
+    const sumY = data.reduce((sum, d) => sum + d.avgPrice, 0);
+    const sumXY = data.reduce((sum, d) => sum + d.month * d.avgPrice, 0);
+    const sumX2Y = data.reduce((sum, d) => sum + Math.pow(d.month, 2) * d.avgPrice, 0);
+    
+    // Calculate determinant of coefficient matrix using expansion by first row
+    // det = n * (sumX2 * sumX4 - sumX3 * sumX3) - sumX * (sumX * sumX4 - sumX2 * sumX3) + sumX2 * (sumX * sumX3 - sumX2 * sumX2)
+    const det = n * (sumX2 * sumX4 - sumX3 * sumX3) 
+              - sumX * (sumX * sumX4 - sumX2 * sumX3) 
+              + sumX2 * (sumX * sumX3 - sumX2 * sumX2);
+    
+    if (Math.abs(det) < 1e-10) {
+      // Fallback to linear if matrix is singular
+      return this.linearRegression(data);
+    }
+    
+    // Cramer's rule: Replace columns with result vector and calculate determinants
+    // For a (intercept): Replace first column
+    const detA = sumY * (sumX2 * sumX4 - sumX3 * sumX3) 
+               - sumX * (sumXY * sumX4 - sumX2Y * sumX3) 
+               + sumX2 * (sumXY * sumX3 - sumX2Y * sumX2);
+    
+    // For b (linear coefficient): Replace second column  
+    const detB = n * (sumXY * sumX4 - sumX2Y * sumX3) 
+               - sumY * (sumX * sumX4 - sumX2 * sumX3) 
+               + sumX2 * (sumX * sumX2Y - sumXY * sumX2);
+    
+    // For c (quadratic coefficient): Replace third column
+    const detC = n * (sumX2 * sumX2Y - sumXY * sumX3) 
+               - sumX * (sumX * sumX2Y - sumXY * sumX2) 
+               + sumY * (sumX * sumX3 - sumX2 * sumX2);
+    
+    const a = detA / det; // intercept
+    const b = detB / det; // linear coefficient
+    const c = detC / det; // quadratic coefficient
+    
+    // Calculate R²
+    const meanY = sumY / n;
+    const ssTotal = data.reduce((sum, d) => sum + Math.pow(d.avgPrice - meanY, 2), 0);
+    const ssResidual = data.reduce((sum, d) => {
+      const predicted = a + b * d.month + c * Math.pow(d.month, 2);
+      return sum + Math.pow(d.avgPrice - predicted, 2);
+    }, 0);
+    const r2 = 1 - (ssResidual / ssTotal);
+    
+    // For slope, use the derivative at the mean month: dy/dx = b + 2cx
+    const meanMonth = sumX / n;
+    const slope = b + 2 * c * meanMonth;
+    
+    return { slope, r2, coefficients: [a, b, c] };
   }
 }
 
