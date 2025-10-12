@@ -118,8 +118,65 @@ The architecture is designed to be modular and scalable, with clear separation b
 
 ## Recent Changes
 
-### October 12, 2025 - Enhanced Market Analysis Implementation
-- **Data Model**: Added comprehensive market analysis schema in shared/schema.ts with submarkets, trends, adjustments, benchmarks, and validations
-- **Storage Layer**: Implemented file-based persistence for all market analysis data in `data/orders/{orderId}/market/enhanced/` directory with append-only JSONL audit logging
-- **API Routes**: Added 14 RESTful endpoints for market analysis with defense-in-depth security (auth, ownership verification, Zod validation, explicit orderId enforcement)
-- **Map Integration**: Installed react-leaflet v4.2.1 for interactive map functionality with polygon drawing capabilities
+### October 12, 2025 - Complete Enhanced Market Analysis System
+**Overview**: Implemented enterprise-grade market analysis system with interactive mapping, regression-based trend analysis, GSE-compliant adjustments, and appraiser validation workflow.
+
+**Core Components Implemented:**
+
+1. **Data Model & Storage** (shared/schema.ts, server/storage.ts):
+   - Comprehensive schemas: Submarket, SubmarketTrend, MarketAdjustment, BenchmarkComparison, AdjustmentValidation
+   - File-based persistence in `data/orders/{orderId}/market/enhanced/` with JSON snapshots and append-only JSONL audit logs
+   - Zod validation schemas for all API operations
+
+2. **API Routes** (server/routes.ts):
+   - 14 RESTful endpoints with defense-in-depth security
+   - Route-level auth → entity ownership checks → Zod validation → explicit orderId enforcement
+   - Endpoints: submarkets, auto-tag, trends, adjustments, benchmarks, validations
+
+3. **Interactive Mapping** (client/src/components/map/EnhancedMarketMap.tsx):
+   - Leaflet v4.2.1 with leaflet-draw for polygon boundaries
+   - Subject/comp markers with color coding
+   - Draw, save, edit submarket polygons
+   - Auto-tag comps to submarkets using @turf/turf point-in-polygon
+
+4. **Trend Analysis** (server/lib/geospatial.ts, client/src/components/market/TrendDashboard.tsx):
+   - Linear regression using least squares method
+   - Polynomial regression (degree 2) using Cramer's rule with proper determinants
+   - Confidence band calculations
+   - Recharts ComposedChart displaying regression lines, confidence bands, DOM trends, absorption rates
+   - Submarket comparison charts
+
+5. **Adjustment Calculator** (client/src/components/market/AdjustmentCalculator.tsx):
+   - Three calculation methods: linear-trend, polynomial-trend, median-comparison
+   - Proper timeline mapping: sale date → effective date with month indexing from trend's analysisDate
+   - Transparent UI showing all inputs, methodology, and results
+   - Full audit trail with metadata capture
+
+6. **GSE Alignment** (client/src/components/market/BenchmarkAlignment.tsx):
+   - Multi-source benchmarks: Fannie Mae, Freddie Mac, TrueTracts, Historical Internal
+   - Variance tracking with configurable acceptable ranges (±1.5%)
+   - Alert system: warning > 1%, critical > 2%
+   - Status determination: within-range, review-recommended, outside-tolerance
+
+7. **Validation Workflow** (client/src/components/market/ValidationWorkflow.tsx):
+   - Run validation checks: GSE alignment, sample size, confidence threshold, trend significance
+   - Appraiser review interface: Approve/Needs Review/Reject with notes
+   - Iterative workflow: rejected/needs-review adjustments re-appear for correction
+   - Only approved adjustments finalized and removed from pending list
+
+8. **Navigation Integration** (client/src/pages/orders/[orderId]/market.tsx, market-enhanced.tsx):
+   - Prominent "Enhanced Market Analysis" card in existing Market tab overview
+   - Feature highlights with icons and descriptions
+   - Bidirectional navigation: Market ↔ Enhanced Market Analysis
+   - Seamless user journey without disrupting existing functionality
+
+**Security Features:**
+- Defense-in-depth: auth middleware + ownership verification + Zod validation + orderId enforcement
+- No cross-order data leakage
+- Audit trails for all operations
+
+**GSE Compliance:**
+- Defensible adjustment calculations with transparent methodology
+- Multi-source benchmark comparisons
+- Complete audit trail (inputs, methods, results, timestamps, user)
+- Appraiser validation and approval workflow
