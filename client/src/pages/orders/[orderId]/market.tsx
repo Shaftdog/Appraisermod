@@ -22,7 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock, Calendar, Database, MapPin } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Settings, RefreshCw, Clock, Calendar, Database, MapPin, Layers, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Link } from 'wouter';
 import { MarketSettings, MarketRecord, McrMetrics, TimeAdjustments } from '@shared/schema';
 import { computeMonthlyMedians, computeMarketMetrics } from '@/lib/market/stats';
 import type { ClosedSale } from '@shared/attom';
@@ -451,6 +452,65 @@ export default function Market() {
                     </div>
                     <div className="text-sm text-muted-foreground">YoY Price Change</div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Enhanced Market Analysis Link */}
+            <Card className="border-2 border-blue-500 bg-gradient-to-br from-blue-50 to-white dark:from-blue-950 dark:to-gray-900">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-blue-500 text-white rounded-lg">
+                    <Layers className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-blue-700 dark:text-blue-300">Enhanced Market Analysis</CardTitle>
+                    <CardDescription>
+                      Advanced submarket analysis with interactive mapping, trend regression, and GSE-compliant adjustments
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="grid md:grid-cols-2 gap-3 text-sm">
+                    <div className="flex items-start gap-2">
+                      <MapPin className="h-4 w-4 text-blue-600 mt-0.5" />
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-gray-100">Interactive Submarket Mapping</div>
+                        <div className="text-gray-600 dark:text-gray-400">Draw boundaries, auto-tag comps with point-in-polygon</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <TrendingUp className="h-4 w-4 text-blue-600 mt-0.5" />
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-gray-100">Trend Analysis & Regression</div>
+                        <div className="text-gray-600 dark:text-gray-400">Linear & polynomial models with confidence bands</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <BarChart3 className="h-4 w-4 text-blue-600 mt-0.5" />
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-gray-100">Market Adjustments</div>
+                        <div className="text-gray-600 dark:text-gray-400">Transparent methodology with audit trail</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5" />
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-gray-100">GSE Alignment & Validation</div>
+                        <div className="text-gray-600 dark:text-gray-400">Benchmark comparisons with appraiser workflow</div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <Link href={`/orders/${orderId}/market-enhanced`}>
+                    <Button className="w-full" size="lg" data-testid="button-enhanced-market">
+                      <Layers className="h-4 w-4 mr-2" />
+                      Open Enhanced Market Analysis
+                      <ArrowRight className="h-4 w-4 ml-2" />
+                    </Button>
+                  </Link>
                 </div>
               </CardContent>
             </Card>

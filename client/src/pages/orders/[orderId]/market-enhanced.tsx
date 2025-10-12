@@ -11,7 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, TrendingUp, Calculator, CheckCircle2 } from 'lucide-react';
+import { Loader2, TrendingUp, Calculator, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { Link } from 'wouter';
 import type { Subject, CompProperty, Submarket, SubmarketTrend, MarketAdjustment, BenchmarkComparison, AdjustmentValidation, LatLng, MarketPolygon } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
 
@@ -184,6 +185,14 @@ export default function EnhancedMarketAnalysisPage() {
 
   return (
     <div className="container mx-auto p-6 space-y-6" data-testid="enhanced-market-page">
+      {/* Back Navigation */}
+      <Link href={`/orders/${orderId}/market`}>
+        <Button variant="ghost" className="mb-4" data-testid="button-back-to-market">
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Market Analysis
+        </Button>
+      </Link>
+
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Enhanced Market Analysis</h1>
