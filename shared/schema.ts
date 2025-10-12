@@ -584,3 +584,330 @@ export const adjustmentRunInputSchema = z.object({
   marketBasis: z.enum(['salePrice', 'ppsf']),
   engineSettings: engineSettingsSchema.optional()
 });
+
+// Enhanced Market Analysis Types
+
+// Submarket definition with boundary polygon
+export interface Submarket {
+  id: string;
+  orderId: string;
+  name: string;
+  description?: string;
+  polygon: MarketPolygon;
+  color?: string; // For map visualization
+  isActive: boolean;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+}
+
+// Trend analysis for a submarket
+export interface SubmarketTrend {
+  id: string;
+  orderId: string;
+  submarketId: string;
+  analysisDate: string; // ISO date when analysis was run
+  timeRange: {
+    startDate: string; // ISO
+    endDate: string; // ISO
+    monthsBack: number;
+  };
+  sampleSize: number;
+  priceMetrics: {
+    medianPrice: number;
+    meanPrice: number;
+    pricePerSqFt: {
+      median: number;
+      mean: number;
+    };
+  };
+  trendAnalysis: {
+    method: 'linear' | 'polynomial' | 'loess';
+    monthlyChange: number; // Percentage per month
+    r2: number; // Coefficient of determination
+    coefficients: number[]; // Regression coefficients
+    confidence: {
+      lower: number;
+      upper: number;
+    };
+  };
+  marketMetrics: {
+    medianDOM: number; // Days on market
+    absorptionRate: number; // Sales per month
+    monthsOfInventory: number;
+    listToSaleRatio: number; // Median SP/LP ratio
+  };
+  computedBy: string;
+}
+
+// Market condition adjustment calculation
+export interface MarketAdjustment {
+  id: string;
+  orderId: string;
+  submarketId?: string; // Optional - may use overall market
+  effectiveDate: string; // ISO - date of adjustment
+  saleDate: string; // ISO - comp sale date
+  adjustmentType: 'time' | 'location' | 'market-conditions';
+  calculation: {
+    method: 'linear-trend' | 'polynomial-trend' | 'median-comparison';
+    baseValue: number;
+    adjustmentPercent: number;
+    adjustmentDollars: number;
+    monthsDifference?: number; // For time adjustments
+  };
+  metadata: {
+    trendId?: string; // Reference to SubmarketTrend if used
+    sampleSize: number;
+    confidence: number; // 0-1 confidence score
+  };
+  auditTrail: {
+    createdAt: string;
+    createdBy: string;
+    inputs: Record<string, any>; // Captured inputs for reproducibility
+    submarketUsed?: string; // Name of submarket
+    regressionMethod?: string;
+  };
+}
+
+// GSE/TrueTracts benchmark comparison
+export interface BenchmarkComparison {
+  id: string;
+  orderId: string;
+  comparisonDate: string;
+  submarketId?: string;
+  ourAdjustment: {
+    type: 'time' | 'location' | 'market-conditions';
+    value: number; // Percentage or dollars
+    method: string;
+  };
+  benchmarks: Array<{
+    source: 'gse-fannie' | 'gse-freddie' | 'truetracts' | 'historical-internal';
+    value: number;
+    variance: number; // Difference from our adjustment
+    variancePercent: number;
+    acceptableRange: {
+      min: number;
+      max: number;
+    };
+  }>;
+  alerts: Array<{
+    level: 'info' | 'warning' | 'critical';
+    message: string;
+    variance: number;
+  }>;
+  status: 'within-range' | 'review-recommended' | 'outside-tolerance';
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNotes?: string;
+}
+
+// Submarket validation workflow
+export interface AdjustmentValidation {
+  id: string;
+  orderId: string;
+  adjustmentIds: string[]; // References to MarketAdjustment
+  validationDate: string;
+  validatedBy: string;
+  status: 'pending' | 'approved' | 'rejected' | 'needs-review';
+  checks: Array<{
+    checkType: 'gse-alignment' | 'sample-size' | 'confidence-threshold' | 'trend-significance';
+    passed: boolean;
+    details: string;
+  }>;
+  approvalNotes?: string;
+  finalizedAt?: string;
+}
+
+// Zod Schemas for validation
+
+// Full schemas matching interfaces (for storage)
+export const submarketSchema = z.object({
+  id: z.string(),
+  orderId: z.string().min(1),
+  name: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  polygon: marketPolygonSchema,
+  color: z.string().regex(/^#[0-9A-F]{6}$/i).optional(),
+  isActive: z.boolean(),
+  createdAt: z.string(),
+  createdBy: z.string().min(1),
+  updatedAt: z.string()
+});
+
+export const submarketTrendSchema = z.object({
+  id: z.string(),
+  orderId: z.string().min(1),
+  submarketId: z.string().min(1),
+  analysisDate: z.string(),
+  timeRange: z.object({
+    startDate: z.string(),
+    endDate: z.string(),
+    monthsBack: z.number().int().min(1).max(36)
+  }),
+  sampleSize: z.number().int().min(0),
+  priceMetrics: z.object({
+    medianPrice: z.number(),
+    meanPrice: z.number(),
+    pricePerSqFt: z.object({
+      median: z.number(),
+      mean: z.number()
+    })
+  }),
+  trendAnalysis: z.object({
+    method: z.enum(['linear', 'polynomial', 'loess']),
+    monthlyChange: z.number(),
+    r2: z.number(),
+    coefficients: z.array(z.number()),
+    confidence: z.object({
+      lower: z.number(),
+      upper: z.number()
+    })
+  }),
+  marketMetrics: z.object({
+    medianDOM: z.number(),
+    absorptionRate: z.number(),
+    monthsOfInventory: z.number(),
+    listToSaleRatio: z.number()
+  }),
+  computedBy: z.string().min(1)
+});
+
+export const marketAdjustmentSchema = z.object({
+  id: z.string(),
+  orderId: z.string().min(1),
+  submarketId: z.string().optional(),
+  effectiveDate: z.string(),
+  saleDate: z.string(),
+  adjustmentType: z.enum(['time', 'location', 'market-conditions']),
+  calculation: z.object({
+    method: z.enum(['linear-trend', 'polynomial-trend', 'median-comparison']),
+    baseValue: z.number(),
+    adjustmentPercent: z.number(),
+    adjustmentDollars: z.number(),
+    monthsDifference: z.number().optional()
+  }),
+  metadata: z.object({
+    trendId: z.string().optional(),
+    sampleSize: z.number().int().min(0),
+    confidence: z.number().min(0).max(1)
+  }),
+  auditTrail: z.object({
+    createdAt: z.string(),
+    createdBy: z.string().min(1),
+    inputs: z.record(z.any()),
+    submarketUsed: z.string().optional(),
+    regressionMethod: z.string().optional()
+  })
+});
+
+export const benchmarkComparisonSchema = z.object({
+  id: z.string(),
+  orderId: z.string().min(1),
+  comparisonDate: z.string(),
+  submarketId: z.string().optional(),
+  ourAdjustment: z.object({
+    type: z.enum(['time', 'location', 'market-conditions']),
+    value: z.number(),
+    method: z.string()
+  }),
+  benchmarks: z.array(z.object({
+    source: z.enum(['gse-fannie', 'gse-freddie', 'truetracts', 'historical-internal']),
+    value: z.number(),
+    variance: z.number(),
+    variancePercent: z.number(),
+    acceptableRange: z.object({
+      min: z.number(),
+      max: z.number()
+    })
+  })),
+  alerts: z.array(z.object({
+    level: z.enum(['info', 'warning', 'critical']),
+    message: z.string(),
+    variance: z.number()
+  })),
+  status: z.enum(['within-range', 'review-recommended', 'outside-tolerance']),
+  reviewedBy: z.string().optional(),
+  reviewedAt: z.string().optional(),
+  reviewNotes: z.string().optional()
+});
+
+export const adjustmentValidationSchema = z.object({
+  id: z.string(),
+  orderId: z.string().min(1),
+  adjustmentIds: z.array(z.string().min(1)),
+  validationDate: z.string(),
+  validatedBy: z.string().min(1),
+  status: z.enum(['pending', 'approved', 'rejected', 'needs-review']),
+  checks: z.array(z.object({
+    checkType: z.enum(['gse-alignment', 'sample-size', 'confidence-threshold', 'trend-significance']),
+    passed: z.boolean(),
+    details: z.string()
+  })),
+  approvalNotes: z.string().max(1000).optional(),
+  finalizedAt: z.string().optional()
+});
+
+// Input schemas for API requests (minimal required fields)
+export const createSubmarketSchema = z.object({
+  orderId: z.string().min(1),
+  name: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  polygon: marketPolygonSchema,
+  color: z.string().regex(/^#[0-9A-F]{6}$/i).optional()
+});
+
+export const computeTrendSchema = z.object({
+  orderId: z.string().min(1),
+  submarketId: z.string().min(1),
+  timeRange: z.object({
+    startDate: z.string(),
+    endDate: z.string(),
+    monthsBack: z.number().int().min(1).max(36)
+  }),
+  method: z.enum(['linear', 'polynomial', 'loess']).default('linear')
+});
+
+export const computeAdjustmentSchema = z.object({
+  orderId: z.string().min(1),
+  submarketId: z.string().optional(),
+  effectiveDate: z.string(),
+  saleDate: z.string(),
+  adjustmentType: z.enum(['time', 'location', 'market-conditions']),
+  baseValue: z.number().positive(),
+  method: z.enum(['linear-trend', 'polynomial-trend', 'median-comparison']),
+  trendId: z.string().optional() // Reference to trend used for calculation
+});
+
+export const createBenchmarkComparisonSchema = z.object({
+  orderId: z.string().min(1),
+  submarketId: z.string().optional(),
+  adjustmentId: z.string().min(1), // Reference to MarketAdjustment
+  benchmarkSources: z.array(z.enum(['gse-fannie', 'gse-freddie', 'truetracts', 'historical-internal'])).min(1)
+});
+
+export const validateAdjustmentsSchema = z.object({
+  orderId: z.string().min(1),
+  adjustmentIds: z.array(z.string().min(1)),
+  approvalNotes: z.string().max(1000).optional()
+});
+
+// Insert/Update schemas (for persistence - includes server-generated fields)
+export const insertSubmarketSchema = submarketSchema.omit({ id: true });
+export const insertSubmarketTrendSchema = submarketTrendSchema.omit({ id: true });
+export const insertMarketAdjustmentSchema = marketAdjustmentSchema.omit({ id: true });
+export const insertBenchmarkComparisonSchema = benchmarkComparisonSchema.omit({ id: true });
+export const insertAdjustmentValidationSchema = adjustmentValidationSchema.omit({ id: true });
+
+// Type exports for API requests
+export type CreateSubmarket = z.infer<typeof createSubmarketSchema>;
+export type ComputeTrend = z.infer<typeof computeTrendSchema>;
+export type ComputeAdjustment = z.infer<typeof computeAdjustmentSchema>;
+export type CreateBenchmarkComparison = z.infer<typeof createBenchmarkComparisonSchema>;
+export type ValidateAdjustments = z.infer<typeof validateAdjustmentsSchema>;
+
+// Type exports for storage/persistence
+export type InsertSubmarket = z.infer<typeof insertSubmarketSchema>;
+export type InsertSubmarketTrend = z.infer<typeof insertSubmarketTrendSchema>;
+export type InsertMarketAdjustment = z.infer<typeof insertMarketAdjustmentSchema>;
+export type InsertBenchmarkComparison = z.infer<typeof insertBenchmarkComparisonSchema>;
+export type InsertAdjustmentValidation = z.infer<typeof insertAdjustmentValidationSchema>;
