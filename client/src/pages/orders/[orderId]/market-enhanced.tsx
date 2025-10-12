@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { EnhancedMarketMap } from '@/components/map/EnhancedMarketMap';
 import { TrendDashboard } from '@/components/market/TrendDashboard';
+import { AdjustmentCalculator } from '@/components/market/AdjustmentCalculator';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -252,19 +253,37 @@ export default function EnhancedMarketAnalysisPage() {
 
         {/* Adjustments Tab */}
         <TabsContent value="adjustments" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Market Condition Adjustments</CardTitle>
-              <CardDescription>
-                Time-based adjustments calculated from trend analysis with audit trails
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {adjustments.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  No adjustments computed yet
-                </div>
-              ) : (
+          {/* Calculator */}
+          {compsData && compsData.comps.length > 0 && submarkets.length > 0 && trends.length > 0 ? (
+            <AdjustmentCalculator
+              orderId={orderId!}
+              submarkets={submarkets}
+              trends={trends}
+              comps={compsData.comps}
+              onAdjustmentComputed={() => {
+                // Refresh adjustments list
+              }}
+            />
+          ) : (
+            <Card>
+              <CardContent className="py-12 text-center text-gray-500">
+                {submarkets.length === 0 && "Create submarkets first"}
+                {submarkets.length > 0 && trends.length === 0 && "Compute trends for submarkets"}
+                {trends.length > 0 && (!compsData || compsData.comps.length === 0) && "Add comparable sales to compute adjustments"}
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Adjustments List */}
+          {adjustments.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Computed Adjustments</CardTitle>
+                <CardDescription>
+                  Historical market condition adjustments with audit trails
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
                 <div className="space-y-2">
                   {adjustments.map((adj) => (
                     <div key={adj.id} className="border rounded p-3 text-sm" data-testid={`adjustment-${adj.id}`}>
@@ -273,6 +292,9 @@ export default function EnhancedMarketAnalysisPage() {
                           <div className="font-medium">{adj.adjustmentType}</div>
                           <div className="text-gray-500 text-xs mt-1">
                             {new Date(adj.saleDate).toLocaleDateString()} → {new Date(adj.effectiveDate).toLocaleDateString()}
+                          </div>
+                          <div className="text-xs text-gray-600 mt-1">
+                            Method: {adj.calculation.method} | R²: {adj.metadata?.confidence?.toFixed(2)}
                           </div>
                         </div>
                         <div className="text-right">
@@ -288,9 +310,9 @@ export default function EnhancedMarketAnalysisPage() {
                     </div>
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Validation Tab */}

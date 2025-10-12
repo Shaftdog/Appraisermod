@@ -2981,7 +2981,36 @@ export class DatabaseStorage implements IStorage {
     
     // Calculate adjustment based on method
     let adjustmentPercent = 0;
+    
     if (params.method === 'linear-trend' && trend) {
+      // Linear: Use the slope (monthly change) directly
+      adjustmentPercent = trend.trendAnalysis.monthlyChange * monthsDifference;
+      
+    } else if (params.method === 'polynomial-trend' && trend && trend.trendAnalysis.coefficients.length === 3) {
+      // Polynomial: Calculate adjustment using the polynomial equation
+      // Need to find where sale date and effective date fall on the regression timeline
+      const [a, b, c] = trend.trendAnalysis.coefficients;
+      
+      // Calculate positions relative to trend analysis end date (most recent = month 1)
+      const trendEndDate = new Date(trend.analysisDate);
+      const monthsSinceTrendEnd_sale = (trendEndDate.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      const monthsSinceTrendEnd_effective = (trendEndDate.getTime() - effectiveDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      
+      // Regression uses months 1 to monthsBack (1 = oldest, monthsBack = most recent)
+      // Convert to regression timeline: older dates have lower month indices
+      const saleMonthIndex = trend.timeRange.monthsBack - monthsSinceTrendEnd_sale;
+      const effectiveMonthIndex = trend.timeRange.monthsBack - monthsSinceTrendEnd_effective;
+      
+      const priceAtSale = a + b * saleMonthIndex + c * Math.pow(saleMonthIndex, 2);
+      const priceAtEffective = a + b * effectiveMonthIndex + c * Math.pow(effectiveMonthIndex, 2);
+      
+      // Adjustment as percentage change
+      adjustmentPercent = ((priceAtEffective - priceAtSale) / priceAtSale) * 100;
+      
+    } else if (params.method === 'median-comparison' && trend) {
+      // Median comparison: Use simple percentage change based on median prices
+      // This is more defensive when R² is low
+      // Simple linear approximation using monthly change rate
       adjustmentPercent = trend.trendAnalysis.monthlyChange * monthsDifference;
     }
     
