@@ -108,4 +108,18 @@ Currently implements a basic authentication structure ready for extension:
 - **@radix-ui/react-***: Complete suite of accessible UI primitives
 - **Custom mobile detection hooks**: Device-specific responsive behavior
 
+### Mapping and Geospatial
+- **Leaflet**: Open-source JavaScript library for interactive maps
+- **react-leaflet**: React components for Leaflet maps (v4.2.1 for React 18 compatibility)
+- **leaflet-draw**: Drawing and editing tools for Leaflet polygons and shapes
+- **@turf/turf**: Geospatial analysis library for point-in-polygon operations and calculations
+
 The architecture is designed to be modular and scalable, with clear separation between frontend and backend concerns, making it easy to extend functionality and integrate with additional services as needed.
+
+## Recent Changes
+
+### October 12, 2025 - Enhanced Market Analysis Implementation
+- **Data Model**: Added comprehensive market analysis schema in shared/schema.ts with submarkets, trends, adjustments, benchmarks, and validations
+- **Storage Layer**: Implemented file-based persistence for all market analysis data in `data/orders/{orderId}/market/enhanced/` directory with append-only JSONL audit logging
+- **API Routes**: Added 14 RESTful endpoints for market analysis with defense-in-depth security (auth, ownership verification, Zod validation, explicit orderId enforcement)
+- **Map Integration**: Installed react-leaflet v4.2.1 for interactive map functionality with polygon drawing capabilities
