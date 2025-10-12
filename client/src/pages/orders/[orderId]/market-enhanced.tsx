@@ -6,6 +6,7 @@ import { EnhancedMarketMap } from '@/components/map/EnhancedMarketMap';
 import { TrendDashboard } from '@/components/market/TrendDashboard';
 import { AdjustmentCalculator } from '@/components/market/AdjustmentCalculator';
 import { BenchmarkAlignment } from '@/components/market/BenchmarkAlignment';
+import { ValidationWorkflow } from '@/components/market/ValidationWorkflow';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -328,61 +329,12 @@ export default function EnhancedMarketAnalysisPage() {
             />
           )}
           
-          {/* Validation Results */}
-          {validations.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Validation Results</CardTitle>
-                <CardDescription>
-                  Appraiser review and approval workflow
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {validations.map((validation) => (
-                    <div key={validation.id} className="border rounded-lg p-4" data-testid={`validation-${validation.id}`}>
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="font-semibold">
-                          Validation - {new Date(validation.validationDate).toLocaleDateString()}
-                        </div>
-                        <Badge
-                          variant={
-                            validation.status === 'approved' ? 'default' :
-                            validation.status === 'rejected' ? 'destructive' :
-                            'secondary'
-                          }
-                        >
-                          {validation.status}
-                        </Badge>
-                      </div>
-                      <div className="text-sm space-y-2">
-                        {validation.checks.map((check, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            {check.passed ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-600" />
-                            ) : (
-                              <div className="h-4 w-4 rounded-full border-2 border-red-600" />
-                            )}
-                            <span className={check.passed ? 'text-gray-700 dark:text-gray-300' : 'text-red-600 dark:text-red-400'}>
-                              {check.checkType}: {check.details}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          
-          {adjustments.length === 0 && (
-            <Card>
-              <CardContent className="py-12 text-center text-gray-500">
-                Compute market adjustments first to run GSE alignment checks
-              </CardContent>
-            </Card>
-          )}
+          {/* Validation Workflow */}
+          <ValidationWorkflow
+            orderId={orderId!}
+            adjustments={adjustments}
+            validations={validations}
+          />
         </TabsContent>
       </Tabs>
     </div>
