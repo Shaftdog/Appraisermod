@@ -123,6 +123,7 @@ export interface IStorage {
   createSubmarket(data: CreateSubmarket, userId: string): Promise<Submarket>;
   updateSubmarket(id: string, updates: Partial<CreateSubmarket>): Promise<Submarket>;
   deleteSubmarket(id: string): Promise<void>;
+  autoTagCompsToSubmarkets(orderId: string): Promise<{ tagged: number; untagged: number; results: Array<{ compId: string; submarketId: string | null }> }>;
   
   getSubmarketTrends(orderId: string, submarketId?: string): Promise<SubmarketTrend[]>;
   getSubmarketTrend(id: string): Promise<SubmarketTrend | undefined>;
@@ -2764,6 +2765,53 @@ export class DatabaseStorage implements IStorage {
     if (submarket) {
       await this.updateSubmarket(id, { isActive: false } as any);
     }
+  }
+
+  async autoTagCompsToSubmarkets(orderId: string): Promise<{ tagged: number; untagged: number; results: Array<{ compId: string; submarketId: string | null }> }> {
+    const { findSubmarketForPoint } = await import('./lib/geospatial');
+    
+    // Get all submarkets for this order
+    const submarkets = await this.getSubmarkets(orderId);
+    const activeSubmarkets = submarkets.filter(s => s.isActive);
+    
+    // Get all comps for this order
+    const { comps } = await this.getCompsWithScoring(orderId);
+    
+    const results: Array<{ compId: string; submarketId: string | null }> = [];
+    let tagged = 0;
+    let untagged = 0;
+    
+    // Update each comp with its submarket
+    for (const comp of comps) {
+      const submarketId = findSubmarketForPoint(
+        comp.latlng,
+        activeSubmarkets.map(s => ({ id: s.id, polygon: s.polygon }))
+      );
+      
+      results.push({ compId: comp.id, submarketId });
+      
+      if (submarketId) {
+        tagged++;
+        comp.submarketId = submarketId;
+      } else {
+        untagged++;
+        comp.submarketId = undefined;
+      }
+    }
+    
+    // Persist updated comps back to storage
+    // Note: Using in-memory compsByOrder map for now
+    this.compsByOrder.set(orderId, comps);
+    
+    // Log the auto-tagging action
+    await this.appendAuditLog(orderId, {
+      action: 'comps.auto-tag',
+      tagged,
+      untagged,
+      submarketCount: activeSubmarkets.length
+    });
+    
+    return { tagged, untagged, results };
   }
 
   async getSubmarketTrends(orderId: string, submarketId?: string): Promise<SubmarketTrend[]> {

@@ -1826,6 +1826,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Auto-tag comps to submarkets using point-in-polygon analysis
+  app.post("/api/orders/:id/market/submarkets/auto-tag", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const result = await storage.autoTagCompsToSubmarkets(orderId);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Get submarket trends
   app.get("/api/orders/:id/market/trends", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {

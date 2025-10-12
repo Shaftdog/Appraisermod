@@ -147,6 +147,29 @@ export default function EnhancedMarketAnalysisPage() {
     }
   });
 
+  // Auto-tag comps to submarkets mutation
+  const autoTagMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest(`/api/orders/${orderId}/market/submarkets/auto-tag`, {
+        method: 'POST'
+      });
+    },
+    onSuccess: (data: { tagged: number; untagged: number }) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/orders/${orderId}/comps`] });
+      toast({
+        title: 'Comps Auto-Tagged',
+        description: `Successfully tagged ${data.tagged} comps to submarkets. ${data.untagged} comps remain untagged.`
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to auto-tag comps',
+        variant: 'destructive'
+      });
+    }
+  });
+
   if (!subject || !compsData) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -186,6 +209,18 @@ export default function EnhancedMarketAnalysisPage() {
 
         {/* Map Tab */}
         <TabsContent value="map" className="space-y-4">
+          {submarkets.length > 0 && (
+            <div className="flex justify-end">
+              <Button
+                onClick={() => autoTagMutation.mutate()}
+                disabled={autoTagMutation.isPending}
+                data-testid="button-auto-tag-comps"
+              >
+                {autoTagMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Auto-Tag Comps to Submarkets
+              </Button>
+            </div>
+          )}
           <EnhancedMarketMap
             subject={subject}
             comps={compsData.comps}

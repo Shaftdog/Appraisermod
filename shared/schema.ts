@@ -228,6 +228,7 @@ export interface CompProperty {
   score?: number; // calculated score 0-1
   band?: ScoreBand;
   isInsidePolygon?: boolean;
+  submarketId?: string; // Auto-assigned via point-in-polygon analysis
   source?: 'attom' | 'manual' | 'mls'; // Data source indicator
   scoreBreakdown?: {
     distance: { similarity: number; weight: number; contribution: number; };
