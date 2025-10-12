@@ -5,6 +5,7 @@ import { apiRequest } from '@/lib/queryClient';
 import { EnhancedMarketMap } from '@/components/map/EnhancedMarketMap';
 import { TrendDashboard } from '@/components/market/TrendDashboard';
 import { AdjustmentCalculator } from '@/components/market/AdjustmentCalculator';
+import { BenchmarkAlignment } from '@/components/market/BenchmarkAlignment';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -317,19 +318,26 @@ export default function EnhancedMarketAnalysisPage() {
 
         {/* Validation Tab */}
         <TabsContent value="validation" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>GSE Alignment & Validation</CardTitle>
-              <CardDescription>
-                Benchmark comparisons with variance tracking and approval workflow
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {validations.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  No validations performed yet
-                </div>
-              ) : (
+          {/* GSE Benchmark Alignment */}
+          {adjustments.length > 0 && (
+            <BenchmarkAlignment
+              orderId={orderId!}
+              adjustments={adjustments}
+              benchmarks={benchmarks}
+              submarkets={submarkets}
+            />
+          )}
+          
+          {/* Validation Results */}
+          {validations.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Validation Results</CardTitle>
+                <CardDescription>
+                  Appraiser review and approval workflow
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
                 <div className="space-y-4">
                   {validations.map((validation) => (
                     <div key={validation.id} className="border rounded-lg p-4" data-testid={`validation-${validation.id}`}>
@@ -355,7 +363,7 @@ export default function EnhancedMarketAnalysisPage() {
                             ) : (
                               <div className="h-4 w-4 rounded-full border-2 border-red-600" />
                             )}
-                            <span className={check.passed ? 'text-gray-700' : 'text-red-600'}>
+                            <span className={check.passed ? 'text-gray-700 dark:text-gray-300' : 'text-red-600 dark:text-red-400'}>
                               {check.checkType}: {check.details}
                             </span>
                           </div>
@@ -364,9 +372,17 @@ export default function EnhancedMarketAnalysisPage() {
                     </div>
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
+          
+          {adjustments.length === 0 && (
+            <Card>
+              <CardContent className="py-12 text-center text-gray-500">
+                Compute market adjustments first to run GSE alignment checks
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
     </div>
