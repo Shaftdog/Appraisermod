@@ -1,4 +1,4 @@
-import { type User, type PublicUser, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments } from "@shared/schema";
+import { type User, type PublicUser, type InsertUser, type Order, type InsertOrder, type Version, type InsertVersion, type OrderData, type TabKey, type RiskStatus, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, type PhotoCategory, type PhotoMasks, type MarketSettings, type MarketRecord, type McrMetrics, type TimeAdjustments, type Submarket, type SubmarketTrend, type MarketAdjustment, type BenchmarkComparison, type AdjustmentValidation, type CreateSubmarket, type ComputeTrend, type ComputeAdjustment, type CreateBenchmarkComparison, type ValidateAdjustments, type InsertSubmarket, type InsertSubmarketTrend, type InsertMarketAdjustment, type InsertBenchmarkComparison, type InsertAdjustmentValidation } from "@shared/schema";
 import { type HiLoState, type HiLoSettings } from "../types/hilo";
 import { type HabuState, type HabuInputs, type HabuResult, type ZoningData } from "@shared/habu";
 import { isPointInPolygon } from "@shared/geo";
@@ -116,6 +116,31 @@ export interface IStorage {
   computeHabu(orderId: string): Promise<HabuResult>;
   updateHabuNotes(orderId: string, notes: { reviewerNotes?: string; appraiserNotes?: string }): Promise<HabuState>;
   fetchZoningStub(orderId: string): Promise<ZoningData>;
+
+  // Enhanced Market Analysis methods
+  getSubmarkets(orderId: string): Promise<Submarket[]>;
+  getSubmarket(id: string): Promise<Submarket | undefined>;
+  createSubmarket(data: CreateSubmarket, userId: string): Promise<Submarket>;
+  updateSubmarket(id: string, updates: Partial<CreateSubmarket>): Promise<Submarket>;
+  deleteSubmarket(id: string): Promise<void>;
+  
+  getSubmarketTrends(orderId: string, submarketId?: string): Promise<SubmarketTrend[]>;
+  getSubmarketTrend(id: string): Promise<SubmarketTrend | undefined>;
+  computeSubmarketTrend(params: ComputeTrend, userId: string): Promise<SubmarketTrend>;
+  
+  getMarketAdjustments(orderId: string): Promise<MarketAdjustment[]>;
+  getMarketAdjustment(id: string): Promise<MarketAdjustment | undefined>;
+  computeMarketAdjustment(params: ComputeAdjustment, userId: string): Promise<MarketAdjustment>;
+  
+  getBenchmarkComparisons(orderId: string): Promise<BenchmarkComparison[]>;
+  getBenchmarkComparison(id: string): Promise<BenchmarkComparison | undefined>;
+  createBenchmarkComparison(params: CreateBenchmarkComparison, userId: string): Promise<BenchmarkComparison>;
+  updateBenchmarkComparison(id: string, updates: { reviewedBy?: string; reviewNotes?: string; status?: string }): Promise<BenchmarkComparison>;
+  
+  getAdjustmentValidations(orderId: string): Promise<AdjustmentValidation[]>;
+  getAdjustmentValidation(id: string): Promise<AdjustmentValidation | undefined>;
+  validateAdjustments(params: ValidateAdjustments, userId: string): Promise<AdjustmentValidation>;
+  updateValidationStatus(id: string, status: 'approved' | 'rejected' | 'needs-review', notes?: string): Promise<AdjustmentValidation>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -756,6 +781,13 @@ export class DatabaseStorage implements IStorage {
   private marketPolygons: Map<string, MarketPolygon | null> = new Map();
   private compSelections: Map<string, CompSelection> = new Map();
 
+  // Enhanced Market Analysis storage
+  private submarkets: Map<string, Submarket> = new Map();
+  private submarketTrends: Map<string, SubmarketTrend> = new Map();
+  private marketAdjustments: Map<string, MarketAdjustment> = new Map();
+  private benchmarkComparisons: Map<string, BenchmarkComparison> = new Map();
+  private adjustmentValidations: Map<string, AdjustmentValidation> = new Map();
+
   async getSubject(orderId: string): Promise<Subject> {
     return this.subjectData;
   }
@@ -1225,6 +1257,26 @@ export class DatabaseStorage implements IStorage {
   private ensureMarketDataDir(orderId: string): void {
     const marketDir = this.getMarketDataPath(orderId);
     fs.mkdirSync(marketDir, { recursive: true });
+  }
+
+  private getEnhancedMarketPath(orderId: string): string {
+    return path.resolve(process.cwd(), 'data', 'orders', orderId, 'market', 'enhanced');
+  }
+
+  private ensureEnhancedMarketDir(orderId: string): void {
+    const dir = this.getEnhancedMarketPath(orderId);
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  private getAuditLogPath(orderId: string): string {
+    return path.join(this.getEnhancedMarketPath(orderId), 'audit.jsonl');
+  }
+
+  private async appendAuditLog(orderId: string, event: any): Promise<void> {
+    this.ensureEnhancedMarketDir(orderId);
+    const auditPath = this.getAuditLogPath(orderId);
+    const auditLine = JSON.stringify({ ...event, timestamp: new Date().toISOString() }) + '\n';
+    await fsPromises.appendFile(auditPath, auditLine, 'utf8');
   }
 
   async getMarketSettings(orderId: string): Promise<MarketSettings> {
@@ -2601,6 +2653,689 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.warn('Failed to write audit event:', error);
     }
+  }
+
+  // ===== ENHANCED MARKET ANALYSIS METHODS =====
+
+  async getSubmarkets(orderId: string): Promise<Submarket[]> {
+    this.ensureEnhancedMarketDir(orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(orderId), 'submarkets.json');
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        const data = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+        return data.filter((s: Submarket) => s.isActive);
+      }
+    } catch (error) {
+      console.error('Error reading submarkets:', error);
+    }
+    
+    return [];
+  }
+
+  async getSubmarket(id: string): Promise<Submarket | undefined> {
+    // Need to iterate all orders to find the submarket - inefficient but preserves existing interface
+    // In production, would use a database with proper indexing
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    if (!fs.existsSync(ordersDir)) return undefined;
+    
+    const orderDirs = fs.readdirSync(ordersDir);
+    for (const orderId of orderDirs) {
+      const submarkets = await this.getSubmarkets(orderId);
+      const found = submarkets.find(s => s.id === id);
+      if (found) return found;
+    }
+    
+    return undefined;
+  }
+
+  async createSubmarket(data: CreateSubmarket, userId: string): Promise<Submarket> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    
+    const submarket: Submarket = {
+      id,
+      ...data,
+      isActive: true,
+      createdAt: now,
+      createdBy: userId,
+      updatedAt: now
+    };
+    
+    this.ensureEnhancedMarketDir(data.orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(data.orderId), 'submarkets.json');
+    
+    let submarkets: Submarket[] = [];
+    if (fs.existsSync(filePath)) {
+      submarkets = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+    }
+    
+    submarkets.push(submarket);
+    await fsPromises.writeFile(filePath, JSON.stringify(submarkets, null, 2), 'utf-8');
+    
+    await this.appendAuditLog(data.orderId, {
+      action: 'submarket.create',
+      submarketId: id,
+      userId,
+      data
+    });
+    
+    return submarket;
+  }
+
+  async updateSubmarket(id: string, updates: Partial<CreateSubmarket>): Promise<Submarket> {
+    // Find the submarket across all orders
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    const orderDirs = fs.readdirSync(ordersDir);
+    
+    for (const orderId of orderDirs) {
+      const filePath = path.join(this.getEnhancedMarketPath(orderId), 'submarkets.json');
+      if (!fs.existsSync(filePath)) continue;
+      
+      const submarkets: Submarket[] = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+      const index = submarkets.findIndex(s => s.id === id);
+      
+      if (index !== -1) {
+        const updated: Submarket = {
+          ...submarkets[index],
+          ...updates,
+          updatedAt: new Date().toISOString()
+        };
+        
+        submarkets[index] = updated;
+        await fsPromises.writeFile(filePath, JSON.stringify(submarkets, null, 2), 'utf-8');
+        
+        await this.appendAuditLog(orderId, {
+          action: 'submarket.update',
+          submarketId: id,
+          updates
+        });
+        
+        return updated;
+      }
+    }
+    
+    throw new Error(`Submarket ${id} not found`);
+  }
+
+  async deleteSubmarket(id: string): Promise<void> {
+    // Soft delete - set isActive to false
+    const submarket = await this.getSubmarket(id);
+    if (submarket) {
+      await this.updateSubmarket(id, { isActive: false } as any);
+    }
+  }
+
+  async getSubmarketTrends(orderId: string, submarketId?: string): Promise<SubmarketTrend[]> {
+    this.ensureEnhancedMarketDir(orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(orderId), 'trends.json');
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        const trends: SubmarketTrend[] = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+        if (submarketId) {
+          return trends.filter(t => t.submarketId === submarketId);
+        }
+        return trends;
+      }
+    } catch (error) {
+      console.error('Error reading trends:', error);
+    }
+    
+    return [];
+  }
+
+  async getSubmarketTrend(id: string): Promise<SubmarketTrend | undefined> {
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    if (!fs.existsSync(ordersDir)) return undefined;
+    
+    const orderDirs = fs.readdirSync(ordersDir);
+    for (const orderId of orderDirs) {
+      const trends = await this.getSubmarketTrends(orderId);
+      const found = trends.find(t => t.id === id);
+      if (found) return found;
+    }
+    
+    return undefined;
+  }
+
+  async computeSubmarketTrend(params: ComputeTrend, userId: string): Promise<SubmarketTrend> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    
+    // Get market records for this submarket
+    const marketRecords = await this.getMarketRecords(params.orderId);
+    const submarket = await this.getSubmarket(params.submarketId);
+    
+    if (!submarket) {
+      throw new Error(`Submarket ${params.submarketId} not found`);
+    }
+    
+    // Filter records within submarket polygon
+    const submarketRecords = marketRecords.filter(record => {
+      return isPointInPolygon({ lat: record.lat, lng: record.lng }, submarket.polygon);
+    });
+    
+    // Compute basic metrics
+    const soldRecords = submarketRecords.filter(r => r.status === 'sold' && r.salePrice);
+    const medianPrice = this.calculateMedian(soldRecords.map(r => r.salePrice || 0));
+    const meanPrice = soldRecords.reduce((sum, r) => sum + (r.salePrice || 0), 0) / soldRecords.length;
+    
+    const pricesPerSqFt = soldRecords
+      .filter(r => r.livingArea && r.salePrice)
+      .map(r => (r.salePrice || 0) / (r.livingArea || 1));
+    
+    // Simple linear regression for trend
+    const monthlyData = this.groupByMonth(soldRecords);
+    const { slope, r2, coefficients } = this.linearRegression(monthlyData);
+    
+    const trend: SubmarketTrend = {
+      id,
+      orderId: params.orderId,
+      submarketId: params.submarketId,
+      analysisDate: now,
+      timeRange: params.timeRange,
+      sampleSize: soldRecords.length,
+      priceMetrics: {
+        medianPrice,
+        meanPrice,
+        pricePerSqFt: {
+          median: this.calculateMedian(pricesPerSqFt),
+          mean: pricesPerSqFt.reduce((a, b) => a + b, 0) / pricesPerSqFt.length
+        }
+      },
+      trendAnalysis: {
+        method: params.method || 'linear',
+        monthlyChange: slope * 100, // Convert to percentage
+        r2,
+        coefficients,
+        confidence: {
+          lower: slope * 0.8,
+          upper: slope * 1.2
+        }
+      },
+      marketMetrics: {
+        medianDOM: this.calculateMedian(submarketRecords.map(r => r.dom || 0)),
+        absorptionRate: soldRecords.length / params.timeRange.monthsBack,
+        monthsOfInventory: submarketRecords.filter(r => r.status === 'active').length / (soldRecords.length / params.timeRange.monthsBack),
+        listToSaleRatio: this.calculateMedian(soldRecords.map(r => r.spToLp || 1))
+      },
+      computedBy: userId
+    };
+    
+    // Persist to file
+    this.ensureEnhancedMarketDir(params.orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(params.orderId), 'trends.json');
+    
+    let trends: SubmarketTrend[] = [];
+    if (fs.existsSync(filePath)) {
+      trends = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+    }
+    
+    trends.push(trend);
+    await fsPromises.writeFile(filePath, JSON.stringify(trends, null, 2), 'utf-8');
+    
+    await this.appendAuditLog(params.orderId, {
+      action: 'trend.compute',
+      trendId: id,
+      submarketId: params.submarketId,
+      userId,
+      params,
+      result: { sampleSize: trend.sampleSize, monthlyChange: trend.trendAnalysis.monthlyChange, r2: trend.trendAnalysis.r2 }
+    });
+    
+    return trend;
+  }
+
+  async getMarketAdjustments(orderId: string): Promise<MarketAdjustment[]> {
+    this.ensureEnhancedMarketDir(orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(orderId), 'adjustments.json');
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+      }
+    } catch (error) {
+      console.error('Error reading adjustments:', error);
+    }
+    
+    return [];
+  }
+
+  async getMarketAdjustment(id: string): Promise<MarketAdjustment | undefined> {
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    if (!fs.existsSync(ordersDir)) return undefined;
+    
+    const orderDirs = fs.readdirSync(ordersDir);
+    for (const orderId of orderDirs) {
+      const adjustments = await this.getMarketAdjustments(orderId);
+      const found = adjustments.find(a => a.id === id);
+      if (found) return found;
+    }
+    
+    return undefined;
+  }
+
+  async computeMarketAdjustment(params: ComputeAdjustment, userId: string): Promise<MarketAdjustment> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    
+    // Get relevant trend if provided
+    const trend = params.trendId ? await this.getSubmarketTrend(params.trendId) : null;
+    
+    // Calculate time difference in months
+    const effectiveDate = new Date(params.effectiveDate);
+    const saleDate = new Date(params.saleDate);
+    const monthsDifference = (effectiveDate.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+    
+    // Calculate adjustment based on method
+    let adjustmentPercent = 0;
+    if (params.method === 'linear-trend' && trend) {
+      adjustmentPercent = trend.trendAnalysis.monthlyChange * monthsDifference;
+    }
+    
+    const adjustmentDollars = params.baseValue * (adjustmentPercent / 100);
+    
+    const adjustment: MarketAdjustment = {
+      id,
+      orderId: params.orderId,
+      submarketId: params.submarketId,
+      effectiveDate: params.effectiveDate,
+      saleDate: params.saleDate,
+      adjustmentType: params.adjustmentType,
+      calculation: {
+        method: params.method,
+        baseValue: params.baseValue,
+        adjustmentPercent,
+        adjustmentDollars,
+        monthsDifference
+      },
+      metadata: {
+        trendId: params.trendId,
+        sampleSize: trend?.sampleSize || 0,
+        confidence: trend?.trendAnalysis.r2 || 0
+      },
+      auditTrail: {
+        createdAt: now,
+        createdBy: userId,
+        inputs: params,
+        submarketUsed: params.submarketId,
+        regressionMethod: params.method
+      }
+    };
+    
+    // Persist to file
+    this.ensureEnhancedMarketDir(params.orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(params.orderId), 'adjustments.json');
+    
+    let adjustments: MarketAdjustment[] = [];
+    if (fs.existsSync(filePath)) {
+      adjustments = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+    }
+    
+    adjustments.push(adjustment);
+    await fsPromises.writeFile(filePath, JSON.stringify(adjustments, null, 2), 'utf-8');
+    
+    await this.appendAuditLog(params.orderId, {
+      action: 'adjustment.compute',
+      adjustmentId: id,
+      submarketId: params.submarketId,
+      userId,
+      params,
+      result: { adjustmentPercent, adjustmentDollars, monthsDifference }
+    });
+    
+    return adjustment;
+  }
+
+  async getBenchmarkComparisons(orderId: string): Promise<BenchmarkComparison[]> {
+    this.ensureEnhancedMarketDir(orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(orderId), 'benchmarks.json');
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+      }
+    } catch (error) {
+      console.error('Error reading benchmarks:', error);
+    }
+    
+    return [];
+  }
+
+  async getBenchmarkComparison(id: string): Promise<BenchmarkComparison | undefined> {
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    if (!fs.existsSync(ordersDir)) return undefined;
+    
+    const orderDirs = fs.readdirSync(ordersDir);
+    for (const orderId of orderDirs) {
+      const benchmarks = await this.getBenchmarkComparisons(orderId);
+      const found = benchmarks.find(b => b.id === id);
+      if (found) return found;
+    }
+    
+    return undefined;
+  }
+
+  async createBenchmarkComparison(params: CreateBenchmarkComparison, userId: string): Promise<BenchmarkComparison> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    
+    const adjustment = await this.getMarketAdjustment(params.adjustmentId);
+    if (!adjustment) {
+      throw new Error(`Adjustment ${params.adjustmentId} not found`);
+    }
+    
+    // Mock benchmark values (in production, would fetch from GSE/TrueTracts APIs)
+    const benchmarks = params.benchmarkSources.map(source => {
+      const baseValue = adjustment.calculation.adjustmentPercent;
+      const variance = (Math.random() - 0.5) * 2; // Random variance -1% to +1%
+      const benchmarkValue = baseValue + variance;
+      
+      return {
+        source,
+        value: benchmarkValue,
+        variance: benchmarkValue - baseValue,
+        variancePercent: ((benchmarkValue - baseValue) / baseValue) * 100,
+        acceptableRange: {
+          min: baseValue - 1.5,
+          max: baseValue + 1.5
+        }
+      };
+    });
+    
+    // Generate alerts based on variance
+    const alerts: Array<{ level: 'info' | 'warning' | 'critical'; message: string; variance: number }> = [];
+    benchmarks.forEach(b => {
+      if (Math.abs(b.variance) > 2) {
+        alerts.push({
+          level: 'critical',
+          message: `${b.source} variance exceeds 2%`,
+          variance: b.variance
+        });
+      } else if (Math.abs(b.variance) > 1) {
+        alerts.push({
+          level: 'warning',
+          message: `${b.source} variance exceeds 1%`,
+          variance: b.variance
+        });
+      }
+    });
+    
+    // Determine status
+    const maxVariance = Math.max(...benchmarks.map(b => Math.abs(b.variance)));
+    const status: 'within-range' | 'review-recommended' | 'outside-tolerance' = 
+      maxVariance > 2 ? 'outside-tolerance' :
+      maxVariance > 1 ? 'review-recommended' :
+      'within-range';
+    
+    const comparison: BenchmarkComparison = {
+      id,
+      orderId: params.orderId,
+      comparisonDate: now,
+      submarketId: params.submarketId,
+      ourAdjustment: {
+        type: adjustment.adjustmentType,
+        value: adjustment.calculation.adjustmentPercent,
+        method: adjustment.calculation.method
+      },
+      benchmarks,
+      alerts,
+      status
+    };
+    
+    // Persist to file
+    this.ensureEnhancedMarketDir(params.orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(params.orderId), 'benchmarks.json');
+    
+    let comparisons: BenchmarkComparison[] = [];
+    if (fs.existsSync(filePath)) {
+      comparisons = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+    }
+    
+    comparisons.push(comparison);
+    await fsPromises.writeFile(filePath, JSON.stringify(comparisons, null, 2), 'utf-8');
+    
+    await this.appendAuditLog(params.orderId, {
+      action: 'benchmark.create',
+      benchmarkId: id,
+      adjustmentId: params.adjustmentId,
+      userId,
+      result: { status, maxVariance, alertCount: alerts.length }
+    });
+    
+    return comparison;
+  }
+
+  async updateBenchmarkComparison(id: string, updates: { reviewedBy?: string; reviewNotes?: string; status?: string }): Promise<BenchmarkComparison> {
+    // Find the benchmark across all orders
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    const orderDirs = fs.readdirSync(ordersDir);
+    
+    for (const orderId of orderDirs) {
+      const filePath = path.join(this.getEnhancedMarketPath(orderId), 'benchmarks.json');
+      if (!fs.existsSync(filePath)) continue;
+      
+      const comparisons: BenchmarkComparison[] = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+      const index = comparisons.findIndex(b => b.id === id);
+      
+      if (index !== -1) {
+        const updated: BenchmarkComparison = {
+          ...comparisons[index],
+          reviewedBy: updates.reviewedBy || comparisons[index].reviewedBy,
+          reviewedAt: updates.reviewedBy ? new Date().toISOString() : comparisons[index].reviewedAt,
+          reviewNotes: updates.reviewNotes || comparisons[index].reviewNotes,
+          status: (updates.status as any) || comparisons[index].status
+        };
+        
+        comparisons[index] = updated;
+        await fsPromises.writeFile(filePath, JSON.stringify(comparisons, null, 2), 'utf-8');
+        
+        await this.appendAuditLog(orderId, {
+          action: 'benchmark.update',
+          benchmarkId: id,
+          updates
+        });
+        
+        return updated;
+      }
+    }
+    
+    throw new Error(`Benchmark comparison ${id} not found`);
+  }
+
+  async getAdjustmentValidations(orderId: string): Promise<AdjustmentValidation[]> {
+    this.ensureEnhancedMarketDir(orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(orderId), 'validations.json');
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+      }
+    } catch (error) {
+      console.error('Error reading validations:', error);
+    }
+    
+    return [];
+  }
+
+  async getAdjustmentValidation(id: string): Promise<AdjustmentValidation | undefined> {
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    if (!fs.existsSync(ordersDir)) return undefined;
+    
+    const orderDirs = fs.readdirSync(ordersDir);
+    for (const orderId of orderDirs) {
+      const validations = await this.getAdjustmentValidations(orderId);
+      const found = validations.find(v => v.id === id);
+      if (found) return found;
+    }
+    
+    return undefined;
+  }
+
+  async validateAdjustments(params: ValidateAdjustments, userId: string): Promise<AdjustmentValidation> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    
+    // Get all adjustments
+    const adjustments = await Promise.all(
+      params.adjustmentIds.map(adjId => this.getMarketAdjustment(adjId))
+    );
+    
+    // Run validation checks
+    const checks: Array<{ checkType: 'gse-alignment' | 'sample-size' | 'confidence-threshold' | 'trend-significance'; passed: boolean; details: string }> = [];
+    
+    // Check GSE alignment
+    for (const adj of adjustments.filter(a => a)) {
+      const benchmarks = await this.getBenchmarkComparisons(params.orderId);
+      const relatedBenchmark = benchmarks.find(b => b.ourAdjustment.value === adj!.calculation.adjustmentPercent);
+      
+      if (relatedBenchmark) {
+        checks.push({
+          checkType: 'gse-alignment',
+          passed: relatedBenchmark.status === 'within-range',
+          details: `Variance: ${relatedBenchmark.status}`
+        });
+      }
+      
+      // Check sample size
+      checks.push({
+        checkType: 'sample-size',
+        passed: adj!.metadata.sampleSize >= 5,
+        details: `Sample size: ${adj!.metadata.sampleSize}`
+      });
+      
+      // Check confidence
+      checks.push({
+        checkType: 'confidence-threshold',
+        passed: adj!.metadata.confidence >= 0.6,
+        details: `R²: ${adj!.metadata.confidence.toFixed(2)}`
+      });
+    }
+    
+    // Determine overall status
+    const allPassed = checks.every(c => c.passed);
+    const status: 'pending' | 'approved' | 'rejected' | 'needs-review' = 
+      allPassed ? 'approved' : 
+      checks.some(c => !c.passed && (c.checkType === 'gse-alignment' || c.checkType === 'sample-size')) ? 'needs-review' :
+      'pending';
+    
+    const validation: AdjustmentValidation = {
+      id,
+      orderId: params.orderId,
+      adjustmentIds: params.adjustmentIds,
+      validationDate: now,
+      validatedBy: userId,
+      status,
+      checks,
+      approvalNotes: params.approvalNotes
+    };
+    
+    // Persist to file
+    this.ensureEnhancedMarketDir(params.orderId);
+    const filePath = path.join(this.getEnhancedMarketPath(params.orderId), 'validations.json');
+    
+    let validations: AdjustmentValidation[] = [];
+    if (fs.existsSync(filePath)) {
+      validations = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+    }
+    
+    validations.push(validation);
+    await fsPromises.writeFile(filePath, JSON.stringify(validations, null, 2), 'utf-8');
+    
+    await this.appendAuditLog(params.orderId, {
+      action: 'validation.create',
+      validationId: id,
+      adjustmentIds: params.adjustmentIds,
+      userId,
+      result: { status, checksPassed: checks.filter(c => c.passed).length, totalChecks: checks.length }
+    });
+    
+    return validation;
+  }
+
+  async updateValidationStatus(id: string, status: 'approved' | 'rejected' | 'needs-review', notes?: string): Promise<AdjustmentValidation> {
+    // Find the validation across all orders
+    const ordersDir = path.join(process.cwd(), 'data', 'orders');
+    const orderDirs = fs.readdirSync(ordersDir);
+    
+    for (const orderId of orderDirs) {
+      const filePath = path.join(this.getEnhancedMarketPath(orderId), 'validations.json');
+      if (!fs.existsSync(filePath)) continue;
+      
+      const validations: AdjustmentValidation[] = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+      const index = validations.findIndex(v => v.id === id);
+      
+      if (index !== -1) {
+        const updated: AdjustmentValidation = {
+          ...validations[index],
+          status,
+          approvalNotes: notes || validations[index].approvalNotes,
+          finalizedAt: new Date().toISOString()
+        };
+        
+        validations[index] = updated;
+        await fsPromises.writeFile(filePath, JSON.stringify(validations, null, 2), 'utf-8');
+        
+        await this.appendAuditLog(orderId, {
+          action: 'validation.update',
+          validationId: id,
+          status,
+          notes
+        });
+        
+        return updated;
+      }
+    }
+    
+    throw new Error(`Validation ${id} not found`);
+  }
+
+  // Helper methods for trend calculations
+  private calculateMedian(values: number[]): number {
+    if (values.length === 0) return 0;
+    const sorted = values.filter(v => !isNaN(v)).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  private groupByMonth(records: MarketRecord[]): Array<{ month: number; avgPrice: number }> {
+    const groups = new Map<number, number[]>();
+    
+    records.forEach(r => {
+      if (r.closeDate && r.salePrice) {
+        const month = new Date(r.closeDate).getMonth();
+        if (!groups.has(month)) groups.set(month, []);
+        groups.get(month)!.push(r.salePrice);
+      }
+    });
+    
+    return Array.from(groups.entries()).map(([month, prices]) => ({
+      month,
+      avgPrice: prices.reduce((a, b) => a + b, 0) / prices.length
+    }));
+  }
+
+  private linearRegression(data: Array<{ month: number; avgPrice: number }>): { slope: number; r2: number; coefficients: number[] } {
+    if (data.length < 2) return { slope: 0, r2: 0, coefficients: [0, 0] };
+    
+    const n = data.length;
+    const sumX = data.reduce((sum, d) => sum + d.month, 0);
+    const sumY = data.reduce((sum, d) => sum + d.avgPrice, 0);
+    const sumXY = data.reduce((sum, d) => sum + d.month * d.avgPrice, 0);
+    const sumX2 = data.reduce((sum, d) => sum + d.month * d.month, 0);
+    const sumY2 = data.reduce((sum, d) => sum + d.avgPrice * d.avgPrice, 0);
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    // Calculate R²
+    const meanY = sumY / n;
+    const ssTotal = data.reduce((sum, d) => sum + Math.pow(d.avgPrice - meanY, 2), 0);
+    const ssResidual = data.reduce((sum, d) => sum + Math.pow(d.avgPrice - (slope * d.month + intercept), 2), 0);
+    const r2 = 1 - (ssResidual / ssTotal);
+    
+    return { slope, r2, coefficients: [intercept, slope] };
   }
 }
 
