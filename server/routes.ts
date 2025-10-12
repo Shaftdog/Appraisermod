@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertUserSchema, type TabKey, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema, adjustmentRunInputSchema, engineSettingsSchema } from "@shared/schema";
+import { insertUserSchema, type TabKey, type WeightProfile, type OrderWeights, type WeightSet, type ConstraintSet, type CompProperty, type Subject, type MarketPolygon, type CompSelection, marketPolygonSchema, compSelectionUpdateSchema, compLockSchema, compSwapSchema, type PhotoMeta, type PhotoAddenda, type PhotosQcSummary, photoUpdateSchema, photoMasksSchema, photoAddendaSchema, bulkPhotoUpdateSchema, marketSettingsSchema, timeAdjustmentsSchema, adjustmentRunInputSchema, engineSettingsSchema, createSubmarketSchema, computeTrendSchema, computeAdjustmentSchema, createBenchmarkComparisonSchema, validateAdjustmentsSchema } from "@shared/schema";
 
 // Security validation schemas for review/policy endpoints
 const policyPackSchema = z.object({
@@ -1725,6 +1725,353 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const timeAdjustments = await storage.updateTimeAdjustments(orderId, validationResult.data);
       res.json(timeAdjustments);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ===== ENHANCED MARKET ANALYSIS API ROUTES =====
+
+  // Get submarkets
+  app.get("/api/orders/:id/market/submarkets", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const submarkets = await storage.getSubmarkets(orderId);
+      res.json(submarkets);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Create submarket
+  app.post("/api/orders/:id/market/submarkets", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = createSubmarketSchema.safeParse({ ...req.body, orderId });
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid submarket data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const submarket = await storage.createSubmarket(validationResult.data, req.user!.id.toString());
+      res.json(submarket);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update submarket
+  app.put("/api/orders/:id/market/submarkets/:submarketId", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const submarketId = req.params.submarketId;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Verify submarket belongs to this order
+      const existing = await storage.getSubmarket(submarketId);
+      if (!existing || existing.orderId !== orderId) {
+        return res.status(404).json({ message: 'Submarket not found in this order' });
+      }
+      
+      // Validate request body
+      const validationResult = createSubmarketSchema.partial().omit({ orderId: true }).safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid submarket data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      // Explicitly enforce orderId to prevent cross-order updates
+      const submarket = await storage.updateSubmarket(submarketId, { ...validationResult.data, orderId });
+      res.json(submarket);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete submarket
+  app.delete("/api/orders/:id/market/submarkets/:submarketId", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const submarketId = req.params.submarketId;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      await storage.deleteSubmarket(submarketId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get submarket trends
+  app.get("/api/orders/:id/market/trends", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const submarketId = req.query.submarketId as string | undefined;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const trends = await storage.getSubmarketTrends(orderId, submarketId);
+      res.json(trends);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Compute submarket trend
+  app.post("/api/orders/:id/market/trends/compute", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = computeTrendSchema.safeParse({ ...req.body, orderId });
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid trend computation parameters", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const trend = await storage.computeSubmarketTrend(validationResult.data, req.user!.id.toString());
+      res.json(trend);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get market adjustments
+  app.get("/api/orders/:id/market/adjustments", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const adjustments = await storage.getMarketAdjustments(orderId);
+      res.json(adjustments);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Compute market adjustment
+  app.post("/api/orders/:id/market/adjustments/compute", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = computeAdjustmentSchema.safeParse({ ...req.body, orderId });
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid adjustment computation parameters", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const adjustment = await storage.computeMarketAdjustment(validationResult.data, req.user!.id.toString());
+      res.json(adjustment);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get benchmark comparisons
+  app.get("/api/orders/:id/market/benchmarks", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const benchmarks = await storage.getBenchmarkComparisons(orderId);
+      res.json(benchmarks);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Create benchmark comparison
+  app.post("/api/orders/:id/market/benchmarks", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = createBenchmarkComparisonSchema.safeParse({ ...req.body, orderId });
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid benchmark comparison data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const benchmark = await storage.createBenchmarkComparison(validationResult.data, req.user!.id.toString());
+      res.json(benchmark);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update benchmark comparison
+  app.put("/api/orders/:id/market/benchmarks/:benchmarkId", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const benchmarkId = req.params.benchmarkId;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Verify benchmark belongs to this order
+      const existing = await storage.getBenchmarkComparison(benchmarkId);
+      if (!existing || existing.orderId !== orderId) {
+        return res.status(404).json({ message: 'Benchmark not found in this order' });
+      }
+      
+      // Validate request body - only allow certain fields to be updated
+      const updateSchema = z.object({
+        reviewedBy: z.string().optional(),
+        reviewNotes: z.string().optional(),
+        status: z.string().optional()
+      });
+      
+      const validationResult = updateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid benchmark update data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      // Note: Benchmark updates only allow review fields, orderId is immutable and enforced by existence check
+      const benchmark = await storage.updateBenchmarkComparison(benchmarkId, validationResult.data);
+      res.json(benchmark);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get adjustment validations
+  app.get("/api/orders/:id/market/validations", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validations = await storage.getAdjustmentValidations(orderId);
+      res.json(validations);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Validate adjustments
+  app.post("/api/orders/:id/market/validations", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      const validationResult = validateAdjustmentsSchema.safeParse({ ...req.body, orderId });
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid validation parameters", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const validation = await storage.validateAdjustments(validationResult.data, req.user!.id.toString());
+      res.json(validation);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update validation status
+  app.put("/api/orders/:id/market/validations/:validationId", requireAuth, requireSameOrigin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const orderId = req.params.id;
+      const validationId = req.params.validationId;
+      
+      const hasAccess = await verifyUserCanAccessOrder(req.user!, orderId);
+      if (!hasAccess) {
+        return res.status(403).json({ message: 'Access denied to this order' });
+      }
+      
+      // Verify validation belongs to this order
+      const existing = await storage.getAdjustmentValidation(validationId);
+      if (!existing || existing.orderId !== orderId) {
+        return res.status(404).json({ message: 'Validation not found in this order' });
+      }
+      
+      // Validate request body
+      const updateSchema = z.object({
+        status: z.enum(['approved', 'rejected', 'needs-review']),
+        notes: z.string().optional()
+      });
+      
+      const validationResult = updateSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Invalid validation update data", 
+          errors: validationResult.error.errors 
+        });
+      }
+      
+      const validation = await storage.updateValidationStatus(
+        validationId, 
+        validationResult.data.status, 
+        validationResult.data.notes
+      );
+      res.json(validation);
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });
     }
