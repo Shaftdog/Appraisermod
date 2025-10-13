@@ -1,11 +1,11 @@
 {
   "id": "subject-123",
-  "address": "4907 18TH AVE W, ,  34209",
+  "address": "624 WASHINGTON OAKS CT, ,  32746",
   "latlng": {
-    "lat": 27.483621,
-    "lng": -82.610414
+    "lat": 28.753225,
+    "lng": -81.331105
   },
-  "gla": 1967,
+  "gla": 3973,
   "quality": 4,
   "condition": 4
 }
