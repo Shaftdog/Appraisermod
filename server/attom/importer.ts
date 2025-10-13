@@ -245,13 +245,15 @@ export async function importClosedSalesByLocation(
     while (tries < 3) {
       try {
         const clientFn = testClient || attomGet;
-        // ATTOM /property/snapshot - no sale date params, we'll filter after
+        // ATTOM /property/snapshot with sale filters (Browser Agent findings)
         const params = {
           latitude: lat,
           longitude: lng,
           radius: radiusMiles,
-          // Note: /property/snapshot doesn't support sale date filtering
-          // We'll filter by date after getting results
+          startsalesearchdate: sinceIso,    // YYYY-MM-DD format, lowercase
+          endsalesearchdate: nowIso,        // YYYY-MM-DD format, lowercase
+          minsaleamt: minSalePrice,         // lowercase
+          maxsaleamt: maxSalePrice,         // lowercase
           page,
           pagesize: 100
         };
