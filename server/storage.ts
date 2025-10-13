@@ -51,6 +51,7 @@ export interface IStorage {
 
   // Map & Comp Selection methods
   getSubject(orderId: string): Promise<Subject>;
+  updateSubject(orderId: string, subject: Partial<Subject>): Promise<Subject>;
   getMarketPolygon(orderId: string): Promise<MarketPolygon | null>;
   saveMarketPolygon(orderId: string, polygon: MarketPolygon): Promise<MarketPolygon>;
   deleteMarketPolygon(orderId: string): Promise<void>;
@@ -790,7 +791,40 @@ export class DatabaseStorage implements IStorage {
   private adjustmentValidations: Map<string, AdjustmentValidation> = new Map();
 
   async getSubject(orderId: string): Promise<Subject> {
+    // Try to load from disk first
+    const subjectPath = path.join(process.cwd(), 'data', 'orders', orderId, 'subject.json');
+    if (fs.existsSync(subjectPath)) {
+      const data = JSON.parse(fs.readFileSync(subjectPath, 'utf-8'));
+      return data;
+    }
+    // Fall back to in-memory default
     return this.subjectData;
+  }
+
+  async updateSubject(orderId: string, updates: Partial<Subject>): Promise<Subject> {
+    // Get current subject data
+    const current = await this.getSubject(orderId);
+    
+    // Merge updates
+    const updated: Subject = {
+      ...current,
+      ...updates
+    };
+    
+    // Ensure order directory exists
+    const orderDir = path.join(process.cwd(), 'data', 'orders', orderId);
+    if (!fs.existsSync(orderDir)) {
+      fs.mkdirSync(orderDir, { recursive: true });
+    }
+    
+    // Save to disk
+    const subjectPath = path.join(orderDir, 'subject.json');
+    fs.writeFileSync(subjectPath, JSON.stringify(updated, null, 2));
+    
+    // Also update in-memory cache
+    this.subjectData = updated;
+    
+    return updated;
   }
 
   async getMarketPolygon(orderId: string): Promise<MarketPolygon | null> {
