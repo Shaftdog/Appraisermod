@@ -140,6 +140,21 @@ The architecture is designed to be modular and scalable, with clear separation b
 - **Solution**: Updated `requireSameOrigin` middleware in server/routes.ts to accept all valid Replit domains (*.repl.co, *.replit.dev, *.replit.app) while maintaining security
 - **Files Modified**: server/routes.ts (lines 100-130)
 
+**Subject Data Persistence and ATTOM Coordinate Fix:**
+- **Issue**: Enhanced Market Analysis map was centering on default Austin, TX coordinates instead of real ATTOM-provided property locations; subject data with latlng coordinates was not persisting to disk
+- **Root Cause**: 
+  1. ATTOM API returns lat/lon as strings (e.g., "27.483621"), but backend Zod validation expected numbers, causing 400 validation errors
+  2. No storage method existed to persist subject data separate from order tabs
+  3. Frontend wasn't transforming ATTOM location format {lat, lon} to Subject format {lat, lng}
+- **Solution**: 
+  1. Added `updateSubject()` method to storage interface and implementation (server/storage.ts)
+  2. Enhanced subject tab validation schema to accept latlng, attomId, apn, quality, condition fields (server/routes.ts)
+  3. Modified PUT /api/orders/:id/tabs/subject route to extract Subject-specific fields and call storage.updateSubject()
+  4. Fixed frontend applyAttomDataToForm to parse ATTOM string coordinates to numbers using parseFloat()
+  5. Subject data now persists to data/orders/{orderId}/subject.json
+- **Verification**: End-to-end test confirmed map now centers on real Bradenton, FL coordinates (27.48, -82.61) instead of Austin defaults (30.27, -97.74)
+- **Files Modified**: server/storage.ts (lines 53-57, 796-831), server/routes.ts (lines 637-671), client/src/pages/orders/[orderId]/subject.tsx (lines 152-185)
+
 ### October 12, 2025 - Complete Enhanced Market Analysis System
 **Overview**: Implemented enterprise-grade market analysis system with interactive mapping, regression-based trend analysis, GSE-compliant adjustments, and appraiser validation workflow.
 
