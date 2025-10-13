@@ -245,40 +245,45 @@ export async function importClosedSalesByLocation(
     while (tries < 3) {
       try {
         const clientFn = testClient || attomGet;
-        data = await clientFn('/propertyapi/v1.0.0/property/snapshot', key, {
+        const params = {
           latitude: lat,
           longitude: lng,
           radius: radiusMiles,
-          startsaletransdate: sinceIso,
-          endsaletransdate: nowIso,
-          minsaleamt: minSalePrice,
-          maxsaleamt: maxSalePrice,
+          startSaleSearchDate: sinceIso,
+          endSaleSearchDate: nowIso,
+          minSaleAmt: minSalePrice,
+          maxSaleAmt: maxSalePrice,
           page,
           pagesize: 100
-        });
+        };
+        console.log(`[ATTOM] Request params:`, JSON.stringify(params));
+        data = await clientFn('/propertyapi/v1.0.0/sale/snapshot', key, params);
+        console.log(`[ATTOM] Response keys:`, Object.keys(data || {}));
+        console.log(`[ATTOM] Response data:`, JSON.stringify(data).substring(0, 500));
         break;
       } catch (e: any) {
         tries++;
         if (tries >= 3) {
           console.error('ATTOM location search error after retries', e.message);
-          data = { property: [] };
+          data = { sale: [] };
           break;
         }
         await backoff(tries === 1 ? 500 : 1500);
       }
     }
 
-    const items = (data?.property || []);
+    const items = (data?.sale || []);
+    console.log(`[ATTOM] Page ${page}: Found ${items.length} items`);
     if (!items.length) break;
     sales.push(...items);
     page += 1;
   }
 
-  // Normalize the property/sales data
+  // Normalize the sale data (from /sale/snapshot endpoint)
   const normalized = sales.filter((s: any) => s && typeof s === 'object').map((s: any) => {
     const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
-    const closeDate = s?.sale?.saleTransDate || s?.sale?.saleDate;
-    const closePrice = Number(s?.sale?.amount || s?.saleAmount || 0);
+    const closeDate = s?.saleSearchDate || s?.saleTransDate || s?.saleRecDate;
+    const closePrice = Number(s?.saleAmt || s?.amount || 0);
     const apn = s?.identifier?.apn || s?.identifier?.apnOriginal;
     
     const saleId = stableSaleId({
