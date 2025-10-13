@@ -76,13 +76,10 @@ export default function EnhancedMarketAnalysisPage() {
         properties: {}
       };
 
-      return apiRequest(`/api/orders/${orderId}/market/submarkets`, {
-        method: 'POST',
-        body: JSON.stringify({
-          orderId,
-          name: data.name,
-          polygon: marketPolygon
-        })
+      return apiRequest('POST', `/api/orders/${orderId}/market/submarkets`, {
+        orderId,
+        name: data.name,
+        polygon: marketPolygon
       });
     },
     onSuccess: () => {
@@ -104,9 +101,7 @@ export default function EnhancedMarketAnalysisPage() {
   // Delete submarket mutation
   const deleteSubmarketMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/orders/${orderId}/market/submarkets/${id}`, {
-        method: 'DELETE'
-      });
+      return apiRequest('DELETE', `/api/orders/${orderId}/market/submarkets/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/orders/${orderId}/market/submarkets`] });
@@ -127,13 +122,10 @@ export default function EnhancedMarketAnalysisPage() {
   // Compute trend mutation (updated to accept method parameter)
   const computeTrendMutation = useMutation({
     mutationFn: async ({ submarketId, method }: { submarketId: string; method: 'linear' | 'polynomial' }) => {
-      return apiRequest(`/api/orders/${orderId}/market/trends/compute`, {
-        method: 'POST',
-        body: JSON.stringify({
-          submarketId,
-          timeRange: { monthsBack: 12, startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString() },
-          method
-        })
+      return apiRequest('POST', `/api/orders/${orderId}/market/trends/compute`, {
+        submarketId,
+        timeRange: { monthsBack: 12, startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString() },
+        method
       });
     },
     onSuccess: () => {
@@ -155,9 +147,7 @@ export default function EnhancedMarketAnalysisPage() {
   // Auto-tag comps to submarkets mutation
   const autoTagMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest(`/api/orders/${orderId}/market/submarkets/auto-tag`, {
-        method: 'POST'
-      });
+      return apiRequest('POST', `/api/orders/${orderId}/market/submarkets/auto-tag`);
     },
     onSuccess: (data: { tagged: number; untagged: number }) => {
       queryClient.invalidateQueries({ queryKey: [`/api/orders/${orderId}/comps`] });

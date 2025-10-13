@@ -129,6 +129,12 @@ The architecture is designed to be modular and scalable, with clear separation b
   - Navigation now works correctly: Market tab ↔ Enhanced Market Analysis
 - **Files Modified**: client/src/App.tsx, client/src/pages/orders/[orderId]/market-enhanced.tsx
 
+**API Request Parameter Fix:**
+- **Issue**: Submarket save failing with "is not a valid HTTP method" error - apiRequest calls using wrong parameter order
+- **Root Cause**: Code was calling `apiRequest(url, options)` (fetch-style) instead of correct `apiRequest(method, url, data)` signature
+- **Solution**: Fixed all mutation apiRequest calls in market-enhanced.tsx to use correct parameter order
+- **Files Modified**: client/src/pages/orders/[orderId]/market-enhanced.tsx (lines 82, 107, 128, 153)
+
 **CSRF Origin Fix for ATTOM Integration:**
 - **Issue**: ATTOM property lookup was failing with 403 "Bad origin" error because Replit serves apps from multiple domains (workspace.*.repl.co and auto-generated *.replit.dev domains), but CSRF protection only allowed exact origin match
 - **Solution**: Updated `requireSameOrigin` middleware in server/routes.ts to accept all valid Replit domains (*.repl.co, *.replit.dev, *.replit.app) while maintaining security
