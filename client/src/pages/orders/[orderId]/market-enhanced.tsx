@@ -34,7 +34,7 @@ export default function EnhancedMarketAnalysisPage() {
   });
 
   // Fetch submarkets
-  const { data: submarkets = [], isLoading: submarkets Loading } = useQuery<Submarket[]>({
+  const { data: submarkets = [], isLoading: submarksLoading } = useQuery<Submarket[]>({
     queryKey: [`/api/orders/${orderId}/market/submarkets`],
     enabled: !!orderId
   });

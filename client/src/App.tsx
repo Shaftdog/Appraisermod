@@ -12,6 +12,7 @@ import { OrderReview } from "@/pages/OrderReview";
 import AdminPage from "@/pages/AdminPage";
 import NotFound from "@/pages/not-found";
 import OrderPage from "@/pages/orders/[orderId]";
+import MarketEnhancedPage from "@/pages/orders/[orderId]/market-enhanced";
 
 function Router() {
   return (
@@ -40,6 +41,13 @@ function Router() {
       )} />
       
       {/* Order Routes */}
+      {/* Enhanced Market Analysis - must come before generic :tab route */}
+      <Route path="/orders/:orderId/market-enhanced" component={() => (
+        <ProtectedRoute>
+          <MarketEnhancedPage />
+        </ProtectedRoute>
+      )} />
+      
       <Route path="/orders/:orderId/:tab?" component={() => (
         <ProtectedRoute>
           <OrderPage />

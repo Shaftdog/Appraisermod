@@ -118,12 +118,21 @@ The architecture is designed to be modular and scalable, with clear separation b
 
 ## Recent Changes
 
-### October 13, 2025 - CSRF Origin Fix for ATTOM Integration
-**Issue**: ATTOM property lookup was failing with 403 "Bad origin" error because Replit serves apps from multiple domains (workspace.*.repl.co and auto-generated *.replit.dev domains), but CSRF protection only allowed exact origin match.
+### October 13, 2025 - Routing and CSRF Fixes
 
-**Solution**: Updated `requireSameOrigin` middleware in server/routes.ts to accept all valid Replit domains (*.repl.co, *.replit.dev, *.replit.app) while maintaining security. This allows ATTOM API calls to work from any Replit-served domain.
+**Enhanced Market Analysis Routing Fix:**
+- **Issue**: Clicking "Enhanced Market Analysis" button redirected back to order page instead of opening enhanced market analysis
+- **Root Cause**: Route `/orders/:orderId/market-enhanced` was not registered in App.tsx, causing wouter to fall back to the generic `:tab?` route which OrderPage didn't know how to handle
+- **Solution**: 
+  - Added specific route for market-enhanced page in App.tsx before the generic tab route (order matters in wouter)
+  - Fixed syntax error in market-enhanced.tsx (variable name had a space)
+  - Navigation now works correctly: Market tab ↔ Enhanced Market Analysis
+- **Files Modified**: client/src/App.tsx, client/src/pages/orders/[orderId]/market-enhanced.tsx
 
-**Files Modified**: server/routes.ts (lines 100-130)
+**CSRF Origin Fix for ATTOM Integration:**
+- **Issue**: ATTOM property lookup was failing with 403 "Bad origin" error because Replit serves apps from multiple domains (workspace.*.repl.co and auto-generated *.replit.dev domains), but CSRF protection only allowed exact origin match
+- **Solution**: Updated `requireSameOrigin` middleware in server/routes.ts to accept all valid Replit domains (*.repl.co, *.replit.dev, *.replit.app) while maintaining security
+- **Files Modified**: server/routes.ts (lines 100-130)
 
 ### October 12, 2025 - Complete Enhanced Market Analysis System
 **Overview**: Implemented enterprise-grade market analysis system with interactive mapping, regression-based trend analysis, GSE-compliant adjustments, and appraiser validation workflow.

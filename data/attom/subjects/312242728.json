@@ -1,0 +1,19 @@
+{
+  "attomId": 312242728,
+  "apn": "17-20-30-511-0000-0010",
+  "address": {
+    "line1": "624 WASHINGTON OAKS CT",
+    "zip": "32746"
+  },
+  "location": {
+    "lat": "28.753225",
+    "lon": "-81.331105"
+  },
+  "char": {
+    "sqft": 3973,
+    "beds": 5,
+    "baths": 4
+  },
+  "assessment": {},
+  "lastSale": {}
+}
