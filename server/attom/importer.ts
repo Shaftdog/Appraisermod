@@ -228,15 +228,20 @@ export async function importClosedSalesByLocation(
   const key = process.env.ATTOM_API_KEY!;
   if (!key) throw new Error('Missing ATTOM_API_KEY');
 
-  // Calculate date range - ATTOM requires YYYY-MM-DD format
+  const clientFn = testClient || attomGet;
+
+  // Calculate date range for filtering
   const since = new Date(); 
   since.setMonth(since.getMonth() - monthsBack);
-  const sinceIso = since.toISOString().slice(0,10); // YYYY-MM-DD
-  const nowIso = new Date().toISOString().slice(0,10); // YYYY-MM-DD
+  const sinceDate = since;
+  const nowDate = new Date();
 
-  // Fetch properties with sales in the specified location/time/price range
+  console.log(`[ATTOM] Two-step import: location (${lat}, ${lng}) radius ${radiusMiles}mi, ${monthsBack}mo back, $${minSalePrice}-$${maxSalePrice}`);
+
+  // STEP 1: Get properties by location only (no sale filters - ATTOM doesn't support them)
   let page = 1, maxPages = 20;
-  const sales: any[] = [];
+  const properties: any[] = [];
+  let apiCalls = 0;
   
   while (page <= maxPages) {
     let tries = 0;
@@ -244,28 +249,19 @@ export async function importClosedSalesByLocation(
     
     while (tries < 3) {
       try {
-        const clientFn = testClient || attomGet;
-        // ATTOM /property/snapshot with sale filters (Browser Agent findings)
-        const params = {
+        apiCalls++;
+        data = await clientFn('/propertyapi/v1.0.0/property/snapshot', key, {
           latitude: lat,
           longitude: lng,
           radius: radiusMiles,
-          startsalesearchdate: sinceIso,    // YYYY-MM-DD format, lowercase
-          endsalesearchdate: nowIso,        // YYYY-MM-DD format, lowercase
-          minsaleamt: minSalePrice,         // lowercase
-          maxsaleamt: maxSalePrice,         // lowercase
           page,
           pagesize: 100
-        };
-        console.log(`[ATTOM] Request params:`, JSON.stringify(params));
-        data = await clientFn('/propertyapi/v1.0.0/property/snapshot', key, params);
-        console.log(`[ATTOM] Response keys:`, Object.keys(data || {}));
-        console.log(`[ATTOM] Response data:`, JSON.stringify(data).substring(0, 500));
+        });
         break;
       } catch (e: any) {
         tries++;
         if (tries >= 3) {
-          console.error('ATTOM location search error after retries', e.message);
+          console.error(`[ATTOM] Step 1 error after retries:`, e.message);
           data = { property: [] };
           break;
         }
@@ -274,26 +270,101 @@ export async function importClosedSalesByLocation(
     }
 
     const items = (data?.property || []);
-    console.log(`[ATTOM] Page ${page}: Found ${items.length} items`);
     if (!items.length) break;
-    sales.push(...items);
+    properties.push(...items);
+    console.log(`[ATTOM] Step 1 page ${page}: ${items.length} properties`);
     page += 1;
   }
 
-  // Normalize the property data (from /property/snapshot endpoint)
-  const sinceDate = new Date(sinceIso);
-  const nowDate = new Date(nowIso);
+  console.log(`[ATTOM] Step 1 complete: ${properties.length} properties found, ${apiCalls} API calls used`);
+
+  // STEP 2: For each property, get sale history via /property/expandedprofile
+  // Rate limit optimization: Limit Step 2 to prevent API quota exhaustion
+  const MAX_EXPANDEDPROFILE_CALLS = 50; // Conservative limit to preserve API quota (500/month)
+  const propertiesToLookup = properties.slice(0, MAX_EXPANDEDPROFILE_CALLS);
   
-  console.log(`[ATTOM] Total properties fetched: ${sales.length}`);
-  if (sales.length > 0) {
-    console.log(`[ATTOM] First property sample:`, JSON.stringify(sales[0]).substring(0, 800));
-    console.log(`[ATTOM] Sale data structure:`, JSON.stringify(sales[0]?.sale || 'NO SALE DATA'));
+  if (properties.length > MAX_EXPANDEDPROFILE_CALLS) {
+    console.log(`[ATTOM] Rate limit optimization: checking first ${MAX_EXPANDEDPROFILE_CALLS} of ${properties.length} properties`);
   }
+
+  const propertiesWithSales: any[] = [];
+  let step2Calls = 0;
+  let step2Successes = 0;
   
-  const normalized = sales.filter((s: any) => s && typeof s === 'object').map((s: any) => {
+  for (const prop of propertiesToLookup) {
+    // Use attomId if available, otherwise try APN
+    const attomId = prop?.identifier?.attomId;
+    const apn = prop?.identifier?.apn || prop?.identifier?.apnOriginal;
+    
+    if (!attomId && !apn) continue;
+
+    let tries = 0;
+    let saleData: any;
+    
+    while (tries < 3) {
+      try {
+        step2Calls++;
+        apiCalls++;
+        
+        // Call expandedprofile with attomId or APN
+        const params: any = {};
+        if (attomId) {
+          params.attomid = attomId;
+        } else if (apn) {
+          params.apn = apn;
+        }
+        
+        saleData = await clientFn('/propertyapi/v1.0.0/property/expandedprofile', key, params);
+        step2Successes++;
+        break;
+      } catch (e: any) {
+        tries++;
+        if (tries >= 3) {
+          console.error(`[ATTOM] Step 2 error for ${attomId || apn}:`, e.message);
+          saleData = null;
+          break;
+        }
+        await backoff(tries === 1 ? 300 : 1000);
+      }
+    }
+
+    // Extract sale history from expandedprofile response
+    const propData = Array.isArray(saleData?.property) ? saleData.property[0] : saleData?.property;
+    if (propData?.sale) {
+      // Merge property data with sale data
+      propertiesWithSales.push({
+        ...prop,
+        sale: propData.sale
+      });
+    }
+
+    // Early termination: If we have enough valid sales, stop to conserve API calls
+    if (propertiesWithSales.length >= 25) {
+      console.log(`[ATTOM] Early termination: found ${propertiesWithSales.length} properties with sales, stopping to conserve API quota`);
+      break;
+    }
+  }
+
+  console.log(`[ATTOM] Step 2 complete: ${propertiesWithSales.length} properties with sale data, ${step2Calls} API calls used (${step2Successes} successful)`);
+  console.log(`[ATTOM] Total API calls: ${apiCalls}`);
+
+  // STEP 3: Normalize and filter by date/price criteria
+  const normalized = propertiesWithSales.filter((s: any) => s && typeof s === 'object').map((s: any) => {
     const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
-    const closeDate = s?.sale?.saleTransDate || s?.sale?.saleSearchDate || s?.sale?.saleRecDate;
-    const closePrice = Number(s?.sale?.saleAmt || s?.sale?.amount || 0);
+    
+    // Extract sale date from various possible fields
+    const closeDate = s?.sale?.saleTransDate || s?.sale?.saleSearchDate || s?.sale?.saleRecDate || s?.sale?.saleDate;
+    
+    // Extract sale price - handle nested structure (sale.amount.saleAmt) or direct (sale.saleAmt)
+    let closePrice = 0;
+    if (s?.sale?.amount?.saleAmt) {
+      closePrice = Number(s.sale.amount.saleAmt);
+    } else if (s?.sale?.saleAmt) {
+      closePrice = Number(s.sale.saleAmt);
+    } else if (typeof s?.sale?.amount === 'number') {
+      closePrice = Number(s.sale.amount);
+    }
+    
     const apn = s?.identifier?.apn || s?.identifier?.apnOriginal;
     
     const saleId = stableSaleId({
@@ -319,17 +390,25 @@ export async function importClosedSalesByLocation(
       lat: s?.location?.latitude, 
       lon: s?.location?.longitude
     };
-  }).filter((x: any) => {
-    // Filter by sale date and price range (since API doesn't support these params)
+  });
+  
+  const filtered = normalized.filter((x: any) => {
+    // Filter by sale date and price range
     if (!x.closeDate || !x.closePrice) return false;
+    
     const saleDate = new Date(x.closeDate);
+    if (isNaN(saleDate.getTime())) return false;
     if (saleDate < sinceDate || saleDate > nowDate) return false;
     if (x.closePrice < minSalePrice || x.closePrice > maxSalePrice) return false;
+    
     return true;
   });
 
+  console.log(`[ATTOM] Final result: ${filtered.length} sales match criteria (after filtering)`);
+
   return {
-    sales: normalized,
-    count: normalized.length
+    sales: filtered,
+    count: filtered.length,
+    apiCalls // Track API usage for monitoring
   };
 }

@@ -1,1 +1,62 @@
-[]
+[
+  {
+    "id": "aba18d2e15e37933",
+    "saleId": "aba18d2e15e37933",
+    "apn": "17-20-30-511-0000-0030",
+    "address": "616 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "closeDate": "2024-10-29",
+    "closePrice": 969900,
+    "gla": 3973,
+    "lotSizeSqft": 0,
+    "lat": "28.753694",
+    "lon": "-81.331095"
+  },
+  {
+    "id": "332c20b0ec8fd564",
+    "saleId": "332c20b0ec8fd564",
+    "apn": "17-20-30-511-0000-0120",
+    "address": "629 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "closeDate": "2024-07-31",
+    "closePrice": 1110000,
+    "gla": 3774,
+    "lotSizeSqft": 0,
+    "lat": "28.752959",
+    "lon": "-81.330535"
+  },
+  {
+    "id": "ce2c56c1bbe1ce7b",
+    "saleId": "ce2c56c1bbe1ce7b",
+    "apn": "17-20-30-511-0000-0080",
+    "address": "613 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "closeDate": "2024-10-25",
+    "closePrice": 977000,
+    "gla": 3694,
+    "lotSizeSqft": 0,
+    "lat": "28.753889",
+    "lon": "-81.330524"
+  },
+  {
+    "id": "7191cd79f987fe90",
+    "saleId": "7191cd79f987fe90",
+    "apn": "16-20-30-533-0000-0210",
+    "address": "128 CITRA LN, LAKE MARY, FL 32746",
+    "closeDate": "2025-06-17",
+    "closePrice": 1200400,
+    "gla": 0,
+    "lotSizeSqft": 0,
+    "lat": "28.753469",
+    "lon": "-81.329698"
+  },
+  {
+    "id": "aa70551bb3a2cb4a",
+    "saleId": "aa70551bb3a2cb4a",
+    "apn": "16-20-30-533-0000-0200",
+    "address": "124 CITRA LN, LAKE MARY, FL 32746",
+    "closeDate": "2025-07-14",
+    "closePrice": 1143380,
+    "gla": 0,
+    "lotSizeSqft": 0,
+    "lat": "28.753662",
+    "lon": "-81.329699"
+  }
+]

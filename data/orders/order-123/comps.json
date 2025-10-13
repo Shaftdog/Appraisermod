@@ -1,0 +1,18 @@
+[
+  {
+    "id": "attom-aba18d2e15e37933",
+    "address": "616 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "salePrice": 969900,
+    "saleDate": "2024-10-29",
+    "distanceMiles": 0.5,
+    "monthsSinceSale": 0,
+    "latlng": {
+      "lat": "28.753694",
+      "lng": "-81.331095"
+    },
+    "gla": 3973,
+    "quality": 4,
+    "condition": 4,
+    "source": "attom"
+  }
+]
