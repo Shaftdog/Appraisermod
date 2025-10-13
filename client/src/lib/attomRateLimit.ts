@@ -18,10 +18,13 @@ export async function checkAttomRateLimit(): Promise<{
       return { canImport: true, minutesRemaining: 0 };
     }
     
+    // Development mode: No rate limiting (set to 0 to allow immediate re-imports)
+    // Production: Consider setting to 10+ minutes to respect ATTOM API quotas
+    const rateLimitMinutes = 0;
+    
     const lastRun = new Date(manifest.lastRunISO);
     const now = new Date();
     const minutesSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60);
-    const rateLimitMinutes = 10; // 10 minute rate limit
     
     if (minutesSinceLastRun >= rateLimitMinutes) {
       return { canImport: true, minutesRemaining: 0, lastRunISO: manifest.lastRunISO };
