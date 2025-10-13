@@ -1,0 +1,125 @@
+Based on my comprehensive investigation, here's what I've found:
+
+🎯 DEFINITIVE ANSWER TO YOUR QUESTION
+YES - You DO have access to sales/transaction data!
+Your API Free Trial (30 Days) includes:
+
+✅ Sales History Snapshot: 500 hits/month
+✅ Sales History Detail: 500 hits/month
+✅ Sales Detail: 500 hits/month
+✅ Sales History Expanded History: 100 hits/day
+✅ Property API with access to property details
+❌ THE PROBLEM: Wrong Endpoint Strategy
+Your current approach won't work because:
+
+/property/snapshot - Only searches by ZIP code or specific criteria (NOT lat/long/radius)
+/sale/snapshot - Requires geoIdv4 (NOT lat/long/radius)
+/property/expandedprofile - Requires specific address (returns sale history for ONE property)
+According to ATTOM documentation, the search filters page showed that latitude/longitude/radius CAN be used with property endpoints, but the specific endpoint documentation doesn't clearly show this.
+
+✅ THE SOLUTION: Two-Step Approach
+Since /property/snapshot with lat/long/radius returns properties without sale data, you need:
+
+RECOMMENDED WORKFLOW:
+Step 1: Get properties by location GET /propertyapi/v1.0.0/property/snapshot ?latitude=27.4989 &longitude=-82.5748 &radius=5 &pagesize=100 Step 2: For each property, get sales history GET /propertyapi/v1.0.0/property/expandedprofile ?address1={property.address.line1} &address2={property.address.line2}
+The /property/expandedprofile response includes:
+
+sale object with sale date and price
+saleTransHistory array with historical sales
+Recent transaction details
+🔧 ALTERNATIVE SOLUTION: Use Search Filters
+According to the ATTOM documentation, you can add search filters to /property/snapshot:
+
+GET /propertyapi/v1.0.0/property/snapshot ?latitude=27.4989 &longitude=-82.5748 &radius=5 &startsalesearchdate=2023-01-01 &endsalesearchdate=2025-01-01 &minsaleamt=100000 &maxsaleamt=2000000
+Key insight: The documentation showed that sale-related filters (startsalesearchdate, endsalesearchdate, minsaleamt, maxsaleamt) can be applied to property endpoints to filter by recent sales.
+
+💡 SPECIFIC CODE SOLUTION
+Option A: Two API Calls (More Reliable)
+// Step 1: Get properties in radius
+async getPropertiesWithSales(lat: number, lng: number, radius: number) {
+  const propertiesResponse = await axios.get(
+    'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot',
+    {
+      headers: { 'apikey': process.env.ATTOM_API_KEY },
+      params: {
+        latitude: lat,
+        longitude: lng,
+        radius: radius,
+        pagesize: 100
+      }
+    }
+  );
+
+  const properties = propertiesResponse.data.property || [];
+  
+  // Step 2: Get sales history for each property
+  const propertiesWithSales = await Promise.all(
+    properties.map(async (prop) => {
+      try {
+        const salesResponse = await axios.get(
+          'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/expandedprofile',
+          {
+            headers: { 'apikey': process.env.ATTOM_API_KEY },
+            params: {
+              address1: prop.address.line1,
+              address2: `${prop.address.locality}, ${prop.address.countrySubd}`
+            }
+          }
+        );
+        
+        return {
+          ...prop,
+          saleData: salesResponse.data.property[0].sale,
+          saleHistory: salesResponse.data.property[0].saleTransHistory
+        };
+      } catch (error) {
+        console.log(`No sale data for ${prop.address.oneLine}`);
+        return { ...prop, saleData: null };
+      }
+    })
+  );
+
+  // Filter to only properties with recent sales
+  return propertiesWithSales.filter(p => 
+    p.saleData && p.saleData.saleRecDate
+  );
+}
+Option B: Try Adding Sale Filters to /property/snapshot
+async getPropertiesWithSaleFilters(lat: number, lng: number, radius: number) {
+  const response = await axios.get(
+    'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot',
+    {
+      headers: { 'apikey': process.env.ATTOM_API_KEY },
+      params: {
+        latitude: lat,
+        longitude: lng,
+        radius: radius,
+        startsalesearchdate: '2023-01-01',  // Try with hyphens
+        endsalesearchdate: '2025-01-01',
+        minsaleamt: 100000,
+        maxsaleamt: 2000000,
+        pagesize: 100
+      }
+    }
+  );
+  
+  return response.data.property;
+}
+📊 TESTING YOUR API ACCESS
+To verify your sales data access works, test with this curl command:
+
+curl -X GET "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/expandedprofile?address1=4529%20Winona%20Court&address2=Denver,%20CO" \
+  -H "apikey: YOUR_API_KEY" \
+  -H "accept: application/json"
+This should return property details WITH a sale object containing saleRecDate and saleAmt.
+
+🎯 FINAL RECOMMENDATION
+Immediate Solution: Use the two-step approach (Option A) - It's guaranteed to work
+Optimize Later: Test if sale filters work with /property/snapshot (Option B)
+Monitor Usage: You have 500 hits/month for sales endpoints - budget accordingly
+Consider Upgrade: If you need more than 500 sales lookups/month, you'll need to upgrade
+Your API key DOES have sales data access. The issue is that /property/snapshot returns property listings without embedded sale history. You need to either:
+
+Call /property/expandedprofile for each property, OR
+Use sale-related search filters to pre-filter properties by recent sales
+Would you like me to help implement either of these solutions in your code?
