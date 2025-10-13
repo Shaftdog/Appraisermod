@@ -44,12 +44,13 @@ export async function importClosedSales(
   const key = process.env.ATTOM_API_KEY!;
   if (!key) throw new Error('Missing ATTOM_API_KEY');
 
-  // Example endpoint patterns (do not hardcode assumptions; these are shaped for our use):
-  // 1) Closed sales by geography/time (ATTOM has sales/transfer endpoints; here we filter by county + date range)
+  // ATTOM API: Use /property/snapshot with geographic and date filters
+  // This endpoint returns properties with sales transactions in the specified area/time range
   const since = new Date(); since.setMonth(since.getMonth() - monthsBack);
-  const sinceIso = since.toISOString().slice(0,10);
+  const sinceIso = since.toISOString().slice(0,10).replace(/-/g, '/'); // ATTOM expects YYYY/MM/DD format
+  const nowIso = new Date().toISOString().slice(0,10).replace(/-/g, '/');
 
-  // Call #1: sales list (paged). Keep it simple: loop pages up to a safe max.
+  // Call #1: property sales list (paged). Keep it simple: loop pages up to a safe max.
   let page = 1, maxPages = 20;
   const sales: any[] = [];
   while (page <= maxPages) {
@@ -58,22 +59,32 @@ export async function importClosedSales(
     while (tries < 3) {
       try {
         const clientFn = testClient || attomGet;
-        data = await clientFn('/propertyapi/v1.0.0/saleshistory/snapshot', key, {
-          countyname: county, state: 'FL', page, pagesize: 100, startdate: sinceIso
+        // Use property/snapshot with geographic and sale date filters
+        data = await clientFn('/propertyapi/v1.0.0/property/snapshot', key, {
+          // Geographic filter - use county if available, otherwise default approach
+          // Note: ATTOM expects FIPS codes for counties, or use radius/zipcode
+          postalcode: '', // Leave empty to search by other criteria
+          radius: 50, // Search within 50 miles if using lat/lng
+          // Sale date filters (transaction date range)
+          startsaletransdate: sinceIso,
+          endsaletransdate: nowIso,
+          // Pagination
+          page,
+          pagesize: 100
         });
         break;
       } catch (e: any) {
         tries++;
         if (tries >= 3) {
           console.error('ATTOM sales error after retries', e.message);
-          data = { sales: [] };
+          data = { property: [] };
           break;
         }
         await backoff(tries === 1 ? 500 : 1500);
       }
     }
 
-    const items = (data?.sales || data?.property || []);
+    const items = (data?.property || []);
     if (!items.length) break;
     sales.push(...items);
     page += 1;
@@ -203,4 +214,100 @@ export async function importSubjectByAddress(addressLine1: string, city: string,
   await ensureDir('data/attom/subjects');
   await fs.writeFile(`data/attom/subjects/${subject.attomId || subject.apn || 'subject'}.json`, JSON.stringify(subject, null, 2));
   return subject;
+}
+
+export async function importClosedSalesByLocation(
+  lat: number,
+  lng: number,
+  radiusMiles: number = 1.0,
+  monthsBack: number = 12,
+  minSalePrice: number = 1,
+  maxSalePrice: number = 10000000,
+  testClient?: (endpoint: string, key: string, params: any) => Promise<any>
+) {
+  const key = process.env.ATTOM_API_KEY!;
+  if (!key) throw new Error('Missing ATTOM_API_KEY');
+
+  // Calculate date range
+  const since = new Date(); 
+  since.setMonth(since.getMonth() - monthsBack);
+  const sinceIso = since.toISOString().slice(0,10).replace(/-/g, '/'); // YYYY/MM/DD
+  const nowIso = new Date().toISOString().slice(0,10).replace(/-/g, '/');
+
+  // Fetch properties with sales in the specified location/time/price range
+  let page = 1, maxPages = 20;
+  const sales: any[] = [];
+  
+  while (page <= maxPages) {
+    let tries = 0;
+    let data: any;
+    
+    while (tries < 3) {
+      try {
+        const clientFn = testClient || attomGet;
+        data = await clientFn('/propertyapi/v1.0.0/property/snapshot', key, {
+          latitude: lat,
+          longitude: lng,
+          radius: radiusMiles,
+          startsaletransdate: sinceIso,
+          endsaletransdate: nowIso,
+          minsaleamt: minSalePrice,
+          maxsaleamt: maxSalePrice,
+          page,
+          pagesize: 100
+        });
+        break;
+      } catch (e: any) {
+        tries++;
+        if (tries >= 3) {
+          console.error('ATTOM location search error after retries', e.message);
+          data = { property: [] };
+          break;
+        }
+        await backoff(tries === 1 ? 500 : 1500);
+      }
+    }
+
+    const items = (data?.property || []);
+    if (!items.length) break;
+    sales.push(...items);
+    page += 1;
+  }
+
+  // Normalize the property/sales data
+  const normalized = sales.filter((s: any) => s && typeof s === 'object').map((s: any) => {
+    const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
+    const closeDate = s?.sale?.saleTransDate || s?.sale?.saleDate;
+    const closePrice = Number(s?.sale?.amount || s?.saleAmount || 0);
+    const apn = s?.identifier?.apn || s?.identifier?.apnOriginal;
+    
+    const saleId = stableSaleId({
+      county: s?.area?.countrySecSubd || 'Unknown',
+      closeDate,
+      closePrice,
+      apn,
+      address
+    });
+    
+    return {
+      id: saleId,
+      saleId,
+      apn,
+      address,
+      city: s?.address?.city,
+      state: s?.address?.state,
+      zip: s?.address?.zip,
+      closeDate,
+      closePrice,
+      gla: Number(s?.building?.size?.grossSize || s?.building?.size?.universalsize || s?.building?.size?.livingsize || 0),
+      lotSizeSqft: Number(s?.lot?.lotSize1 || s?.lot?.lotSize || 0),
+      lat: s?.location?.latitude, 
+      lon: s?.location?.longitude
+    };
+  }).filter((x: any) => x.closeDate && x.closePrice);
+
+  return {
+    sales: normalized,
+    count: normalized.length
+  };
 }

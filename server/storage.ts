@@ -1468,47 +1468,44 @@ export class DatabaseStorage implements IStorage {
 
   async importAttomClosedSalesForOrder(orderId: string, subjectAddress: any, settings?: any): Promise<{ count: number; filePath: string }> {
     // Import the ATTOM importer functions dynamically
-    const { importClosedSales } = await import('./attom/importer');
+    const { importClosedSalesByLocation } = await import('./attom/importer');
     
     if (!process.env.ATTOM_API_KEY) {
       throw new Error('ATTOM_API_KEY not configured');
     }
     
-    // Extract county from subject address for import
-    // This is a simplified version - in production, you'd need proper address parsing
-    const county = 'Orange'; // Default to Orange County, FL for demo
+    // Get subject property data to extract coordinates
+    const subject = await this.getSubject(orderId);
+    if (!subject?.latlng?.lat || !subject?.latlng?.lng) {
+      throw new Error('Subject property must have valid coordinates for ATTOM search');
+    }
+    
+    const radiusMiles = settings?.radiusMiles || 1.0;
     const monthsBack = settings?.monthsBack || 12;
+    const minSalePrice = settings?.minSalePrice || 1;
+    const maxSalePrice = settings?.maxSalePrice || 10000000;
     
     try {
-      // Import ATTOM closed sales data for the county
-      const result = await importClosedSales(county, monthsBack);
+      // Import ATTOM closed sales data by location (lat/lng + radius)
+      const result = await importClosedSalesByLocation(
+        subject.latlng.lat,
+        subject.latlng.lng,
+        radiusMiles,
+        monthsBack,
+        minSalePrice,
+        maxSalePrice
+      );
       
-      // Create order-specific ATTOM directory and copy/filter data
+      // Create order-specific ATTOM directory
       const orderAttomDir = path.join(process.cwd(), 'data/orders', orderId, 'attom');
       fs.mkdirSync(orderAttomDir, { recursive: true });
       
-      // Read the imported county data
-      const countyDataPath = result.file;
-      const countyData = JSON.parse(fs.readFileSync(countyDataPath, 'utf-8'));
-      
-      // Filter data within radius of subject (simplified - use all data for now)
-      const radiusMiles = settings?.radiusMiles || 1.0;
-      let filteredSales = countyData;
-      
-      // Apply price filters if provided
-      if (settings?.minSalePrice) {
-        filteredSales = filteredSales.filter((sale: any) => sale.closePrice >= settings.minSalePrice);
-      }
-      if (settings?.maxSalePrice) {
-        filteredSales = filteredSales.filter((sale: any) => sale.closePrice <= settings.maxSalePrice);
-      }
-      
       // Save order-specific ATTOM data
       const orderAttomPath = path.join(orderAttomDir, 'closed-sales.json');
-      fs.writeFileSync(orderAttomPath, JSON.stringify(filteredSales, null, 2));
+      fs.writeFileSync(orderAttomPath, JSON.stringify(result.sales, null, 2));
       
       return {
-        count: filteredSales.length,
+        count: result.sales.length,
         filePath: orderAttomPath
       };
       
