@@ -149,15 +149,29 @@ export default function Subject() {
   const applyAttomDataToForm = () => {
     if (!attomResult) return;
     
-    const updatedFormData = {
+    // Build the updated form data with all available ATTOM fields
+    const updatedFormData: any = {
       ...formData,
       address: attomResult.address ? `${attomResult.address.line1 || ''}, ${attomResult.address.city || ''}, ${attomResult.address.state || ''} ${attomResult.address.zip || ''}`.trim().replace(/^,\s*|,\s*$/, '') : formData.address,
       yearBuilt: attomResult.char?.yearBuilt?.toString() || formData.yearBuilt,
-      gla: attomResult.char?.sqft?.toString() || formData.gla,
+      gla: attomResult.char?.sqft || formData.gla,  // Keep as number for proper validation
       bedrooms: attomResult.char?.beds?.toString() || formData.bedrooms,
       bathrooms: attomResult.char?.baths?.toString() || formData.bathrooms,
       lotSize: attomResult.char?.lotSizeSqft?.toString() || formData.lotSize
     };
+    
+    // Transform ATTOM location {lat, lon} to Subject latlng {lat, lng}
+    // Note: ATTOM returns lat/lon as strings, must parse to numbers
+    if (attomResult.location?.lat && attomResult.location?.lon) {
+      updatedFormData.latlng = {
+        lat: typeof attomResult.location.lat === 'string' ? parseFloat(attomResult.location.lat) : attomResult.location.lat,
+        lng: typeof attomResult.location.lon === 'string' ? parseFloat(attomResult.location.lon) : attomResult.location.lon
+      };
+    }
+    
+    // Include ATTOM identifiers and quality/condition if available
+    if (attomResult.attomId) updatedFormData.attomId = attomResult.attomId;
+    if (attomResult.apn) updatedFormData.apn = attomResult.apn;
     
     setFormData(updatedFormData);
     updateSubjectMutation.mutate(updatedFormData);

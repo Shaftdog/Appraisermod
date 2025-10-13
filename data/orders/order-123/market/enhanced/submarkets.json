@@ -50,10 +50,10 @@
       },
       "properties": {}
     },
-    "isActive": true,
+    "isActive": false,
     "createdAt": "2025-10-13T00:27:44.283Z",
     "createdBy": "40f965ba-4d70-41e6-ad21-dec093f9f9d5",
-    "updatedAt": "2025-10-13T00:27:44.283Z"
+    "updatedAt": "2025-10-13T00:39:38.971Z"
   },
   {
     "id": "47b877e3-2cbf-4cb6-b486-3414c9c6a84a",
@@ -94,9 +94,9 @@
       },
       "properties": {}
     },
-    "isActive": true,
+    "isActive": false,
     "createdAt": "2025-10-13T00:28:11.986Z",
     "createdBy": "40f965ba-4d70-41e6-ad21-dec093f9f9d5",
-    "updatedAt": "2025-10-13T00:28:11.986Z"
+    "updatedAt": "2025-10-13T00:39:35.747Z"
   }
 ]

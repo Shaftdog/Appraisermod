@@ -1,0 +1,11 @@
+{
+  "id": "subject-123",
+  "address": "4907 18TH AVE W, ,  34209",
+  "latlng": {
+    "lat": 27.483621,
+    "lng": -82.610414
+  },
+  "gla": 1967,
+  "quality": 4,
+  "condition": 4
+}
