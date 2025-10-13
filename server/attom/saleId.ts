@@ -8,11 +8,11 @@ export function stableSaleId(input: {
   address?: string;       // one-line address, optional fallback
 }) {
   const key = [
-    input.county.trim().toUpperCase(),
+    (input.county || '').trim().toUpperCase(),
     (input.apn || '').replace(/\W+/g, '').toUpperCase(),
     (input.address || '').replace(/\s+/g, ' ').trim().toUpperCase(),
-    input.closeDate.slice(0, 10),
-    Math.round(input.closePrice),
+    (input.closeDate || '').slice(0, 10),
+    Math.round(input.closePrice || 0),
   ].join('|');
   return crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
 }

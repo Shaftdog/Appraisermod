@@ -1,0 +1,140 @@
+Status 400: SuccessWithoutResult - "Your request was successful but returned no results"
+
+This confirms that the API call is working correctly, but there's genuinely no data for the search criteria. Now let me open a new tab and search for more information about how to properly use the ATTOM API with geographic coordinates.
+
+Based on what I've learned so far, here are the key findings:
+
+KEY FINDINGS:
+The /sale/snapshot endpoint does NOT support latitude/longitude/radius - it only accepts geoIdv4 parameter
+Status 400 "SuccessWithoutResult" means the API call worked, but there's no data matching your criteria
+Date format: The documentation shows YYYY-MM-DD (with hyphens), not YYYY/MM/DD (with slashes)
+For geographic searches with lat/long/radius, you might need to use a different endpoint or convert coordinates to geoIdv4
+Let me now create a comprehensive diagnostic report with specific actionable steps.
+
+Based on my investigation of the ATTOM API documentation, I've identified the root cause of your issue and have specific solutions for you.
+
+🔴 ROOT CAUSE IDENTIFIED
+The /sale/snapshot endpoint DOES NOT support latitude/longitude/radius parameters. It ONLY accepts geoIdv4 (geographic ID) parameters. You're getting "SuccessWithoutResult" because:
+
+Wrong Endpoint: /sale/snapshot requires geoIdv4, not lat/long/radius
+Status Code 400 "SuccessWithoutResult": According to ATTOM's documentation, this means "Your request was successful but returned no results" - the API is working, but there's no data for your search criteria (likely because it's ignoring unsupported parameters)
+✅ SOLUTIONS
+Option 1: Use Property Snapshot Endpoint (RECOMMENDED)
+For lat/long/radius searches, you should use:
+
+Endpoint: /propertyapi/v1.0.0/property/snapshot
+Supports: latitude, longitude, radius
+Returns: Properties within the geographic area (which include sales data in the expanded profile)
+Example working request:
+
+GET https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot ?latitude=27.4989&longitude=-82.5748&radius=5 &minsaleamt=100000&maxsaleamt=2000000 &startsalesearchdate=2023-01-01&endsalesearchdate=2025-01-01
+Option 2: Convert Coordinates to GeoIDv4
+If you must use /sale/snapshot, you need to:
+
+Convert your lat/long to ATTOM's geoIdv4 format
+Use an ATTOM geocoding endpoint to get the geoIdv4 first
+Then query /sale/snapshot with that geoIdv4
+Example with geoIdv4:
+
+GET https://api.gateway.attomdata.com/propertyapi/v1.0.0/sale/snapshot ?geoIdv4=6828b00047035292d4d47fe020e636bb3 &startsalesearchdate=2023-01-01&endsalesearchdate=2025-01-01 &minsaleamt=100000&maxsaleamt=2000000
+🔧 SPECIFIC FIXES FOR YOUR CODE
+Issue 1: Date Format Inconsistency
+The documentation examples show YYYY-MM-DD (with hyphens), not YYYY/MM/DD (with slashes).
+
+Fix in server/attom/importer.ts:
+
+// Change from: 2023/01/01
+// Change to:   2023-01-01
+
+const startDate = new Date(Date.now() - 24 * 30 * 24 * 60 * 60 * 1000)
+  .toISOString().split('T')[0]; // Returns YYYY-MM-DD
+const endDate = new Date().toISOString().split('T')[0];
+Issue 2: Wrong Endpoint Parameters
+Current (WRONG):
+
+const params = {
+  latitude: 27.48,
+  longitude: -82.61,
+  radius: 5,
+  startSaleSearchDate: '2023/01/01',
+  endSaleSearchDate: '2025/01/01',
+  minSaleAmt: 100000,
+  maxSaleAmt: 2000000
+};
+Option A - Switch to Property Snapshot (RECOMMENDED):
+
+// In server/attom/client.ts
+async searchSalesByLocation(params: {
+  latitude: number;
+  longitude: number;
+  radius: number;
+  startSaleSearchDate: string;
+  endSaleSearchDate: string;
+  minSaleAmt?: number;
+  maxSaleAmt?: number;
+}) {
+  // Change endpoint from /sale/snapshot to /property/snapshot
+  return this.get('/property/snapshot', {
+    params: {
+      latitude: params.latitude,
+      longitude: params.longitude,
+      radius: params.radius,
+      startsalesearchdate: params.startSaleSearchDate, // lowercase!
+      endsalesearchdate: params.endSaleSearchDate,
+      minsaleamt: params.minSaleAmt,
+      maxsaleamt: params.maxSaleAmt,
+    }
+  });
+}
+Option B - Convert to GeoIDv4 First:
+
+// Step 1: Get geoIdv4 from coordinates
+async getGeoIdFromCoordinates(lat: number, lng: number) {
+  // You may need to use a property lookup or geocoding endpoint
+  // to get the geoIdv4 for the area
+  const response = await this.get('/property/address', {
+    params: { latitude: lat, longitude: lng }
+  });
+  return response.property[0].identifier.geoIdV4;
+}
+
+// Step 2: Use geoIdv4 with /sale/snapshot
+async searchSalesByGeoId(geoIdv4: string, params: {...}) {
+  return this.get('/sale/snapshot', {
+    params: {
+      geoIdv4: geoIdv4,
+      startsalesearchdate: params.startSaleSearchDate,
+      endsalesearchdate: params.endSaleSearchDate,
+      minsaleamt: params.minSaleAmt,
+      maxsaleamt: params.maxSaleAmt,
+    }
+  });
+}
+🧪 TEST WITH WORKING EXAMPLE
+Test URL (should return data):
+
+https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot ?latitude=30.2500 &longitude=-97.7500 &radius=2 &startsalesearchdate=2023-01-01 &endsalesearchdate=2024-12-31
+Headers required:
+
+apikey: YOUR_ATTOM_API_KEY accept: application/json
+📋 VERIFICATION CHECKLIST
+✅ Change endpoint from /sale/snapshot to /property/snapshot
+✅ Use lowercase parameter names: startsalesearchdate, endsalesearchdate, minsaleamt, maxsaleamt
+✅ Use hyphenated date format: 2023-01-01 not 2023/01/01
+✅ Test with high-volume market: Austin, TX (30.2500, -97.7500) or Los Angeles (34.0522, -118.2437)
+✅ Verify API key has Property API access (not just Transaction API)
+✅ Check rate limits - Status 400 could also indicate you've hit API limits
+🎯 RECOMMENDED ACTION PLAN
+Immediate Steps:
+
+Switch to /property/snapshot endpoint in your code
+Update parameter names to lowercase versions
+Fix date format to use hyphens (YYYY-MM-DD)
+Test with Austin, TX coordinates (known high-volume market)
+Parse the response - property sales data is nested in the property object
+Long-term:
+
+Consider implementing a geocoding layer to convert lat/long to geoIdv4 if you need the specific sale-focused data structure
+Add error handling for "SuccessWithoutResult" to inform users when no data exists for their criteria
+Implement pagination for large result sets
+Let me know if you need help implementing any of these solutions, or if you'd like me to look at your actual code files to provide more specific fixes!

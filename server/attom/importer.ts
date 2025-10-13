@@ -228,11 +228,11 @@ export async function importClosedSalesByLocation(
   const key = process.env.ATTOM_API_KEY!;
   if (!key) throw new Error('Missing ATTOM_API_KEY');
 
-  // Calculate date range
+  // Calculate date range - ATTOM requires YYYY-MM-DD format
   const since = new Date(); 
   since.setMonth(since.getMonth() - monthsBack);
-  const sinceIso = since.toISOString().slice(0,10).replace(/-/g, '/'); // YYYY/MM/DD
-  const nowIso = new Date().toISOString().slice(0,10).replace(/-/g, '/');
+  const sinceIso = since.toISOString().slice(0,10); // YYYY-MM-DD
+  const nowIso = new Date().toISOString().slice(0,10); // YYYY-MM-DD
 
   // Fetch properties with sales in the specified location/time/price range
   let page = 1, maxPages = 20;
@@ -245,19 +245,18 @@ export async function importClosedSalesByLocation(
     while (tries < 3) {
       try {
         const clientFn = testClient || attomGet;
+        // ATTOM /property/snapshot - no sale date params, we'll filter after
         const params = {
           latitude: lat,
           longitude: lng,
           radius: radiusMiles,
-          startSaleSearchDate: sinceIso,
-          endSaleSearchDate: nowIso,
-          minSaleAmt: minSalePrice,
-          maxSaleAmt: maxSalePrice,
+          // Note: /property/snapshot doesn't support sale date filtering
+          // We'll filter by date after getting results
           page,
           pagesize: 100
         };
         console.log(`[ATTOM] Request params:`, JSON.stringify(params));
-        data = await clientFn('/propertyapi/v1.0.0/sale/snapshot', key, params);
+        data = await clientFn('/propertyapi/v1.0.0/property/snapshot', key, params);
         console.log(`[ATTOM] Response keys:`, Object.keys(data || {}));
         console.log(`[ATTOM] Response data:`, JSON.stringify(data).substring(0, 500));
         break;
@@ -265,25 +264,34 @@ export async function importClosedSalesByLocation(
         tries++;
         if (tries >= 3) {
           console.error('ATTOM location search error after retries', e.message);
-          data = { sale: [] };
+          data = { property: [] };
           break;
         }
         await backoff(tries === 1 ? 500 : 1500);
       }
     }
 
-    const items = (data?.sale || []);
+    const items = (data?.property || []);
     console.log(`[ATTOM] Page ${page}: Found ${items.length} items`);
     if (!items.length) break;
     sales.push(...items);
     page += 1;
   }
 
-  // Normalize the sale data (from /sale/snapshot endpoint)
+  // Normalize the property data (from /property/snapshot endpoint)
+  const sinceDate = new Date(sinceIso);
+  const nowDate = new Date(nowIso);
+  
+  console.log(`[ATTOM] Total properties fetched: ${sales.length}`);
+  if (sales.length > 0) {
+    console.log(`[ATTOM] First property sample:`, JSON.stringify(sales[0]).substring(0, 800));
+    console.log(`[ATTOM] Sale data structure:`, JSON.stringify(sales[0]?.sale || 'NO SALE DATA'));
+  }
+  
   const normalized = sales.filter((s: any) => s && typeof s === 'object').map((s: any) => {
     const address = `${s?.address?.oneLine || [s?.address?.line1, s?.address?.city, s?.address?.state, s?.address?.zip].filter(Boolean).join(', ')}`;
-    const closeDate = s?.saleSearchDate || s?.saleTransDate || s?.saleRecDate;
-    const closePrice = Number(s?.saleAmt || s?.amount || 0);
+    const closeDate = s?.sale?.saleTransDate || s?.sale?.saleSearchDate || s?.sale?.saleRecDate;
+    const closePrice = Number(s?.sale?.saleAmt || s?.sale?.amount || 0);
     const apn = s?.identifier?.apn || s?.identifier?.apnOriginal;
     
     const saleId = stableSaleId({
@@ -309,7 +317,14 @@ export async function importClosedSalesByLocation(
       lat: s?.location?.latitude, 
       lon: s?.location?.longitude
     };
-  }).filter((x: any) => x.closeDate && x.closePrice);
+  }).filter((x: any) => {
+    // Filter by sale date and price range (since API doesn't support these params)
+    if (!x.closeDate || !x.closePrice) return false;
+    const saleDate = new Date(x.closeDate);
+    if (saleDate < sinceDate || saleDate > nowDate) return false;
+    if (x.closePrice < minSalePrice || x.closePrice > maxSalePrice) return false;
+    return true;
+  });
 
   return {
     sales: normalized,
