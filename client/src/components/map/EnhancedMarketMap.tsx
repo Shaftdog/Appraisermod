@@ -9,9 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Home, MapPin, Square, Trash2, Save, Layers, Plus } from 'lucide-react';
+import { Home, MapPin, Square, Trash2, Save, Layers, Plus, Maximize2, AlertCircle } from 'lucide-react';
 import { Subject, CompProperty, type Submarket, type LatLng } from '@shared/schema';
 import { cn } from '@/lib/utils';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 // Fix Leaflet default marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -113,6 +114,42 @@ function DrawControl({
   return null;
 }
 
+// Fit bounds control component
+function FitBoundsControl({ 
+  subject, 
+  comps 
+}: { 
+  subject: Subject; 
+  comps: CompProperty[] 
+}) {
+  const map = useMap();
+
+  const fitAllMarkers = () => {
+    const bounds = L.latLngBounds([]);
+    
+    // Add subject to bounds
+    bounds.extend([subject.latlng.lat, subject.latlng.lng]);
+    
+    // Add all comps to bounds
+    comps.forEach(comp => {
+      bounds.extend([comp.latlng.lat, comp.latlng.lng]);
+    });
+
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  };
+
+  useEffect(() => {
+    // Trigger fit on mount if comps exist
+    if (comps.length > 0) {
+      fitAllMarkers();
+    }
+  }, []); // Only run once on mount
+
+  return null;
+}
+
 export function EnhancedMarketMap({
   subject,
   comps,
@@ -162,14 +199,44 @@ export function EnhancedMarketMap({
   return (
     <Card className={cn("flex flex-col h-full", className)} data-testid="enhanced-market-map">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-lg flex items-center gap-2">
             <Layers className="h-5 w-5" />
             Market Analysis Map
           </CardTitle>
-          <Badge variant="secondary" data-testid="submarket-count">
-            {submarkets.length} Submarket{submarkets.length !== 1 ? 's' : ''}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" data-testid="comp-count">
+              <MapPin className="h-3 w-3 mr-1" />
+              {comps.length} Comp{comps.length !== 1 ? 's' : ''}
+            </Badge>
+            <Badge variant="secondary" data-testid="submarket-count">
+              <Square className="h-3 w-3 mr-1" />
+              {submarkets.length} Submarket{submarkets.length !== 1 ? 's' : ''}
+            </Badge>
+            {comps.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  // Trigger fit bounds manually
+                  const mapElement = document.querySelector('.leaflet-container') as any;
+                  if (mapElement && mapElement._leaflet_map) {
+                    const map = mapElement._leaflet_map;
+                    const bounds = L.latLngBounds([]);
+                    bounds.extend([subject.latlng.lat, subject.latlng.lng]);
+                    comps.forEach(comp => bounds.extend([comp.latlng.lat, comp.latlng.lng]));
+                    if (bounds.isValid()) {
+                      map.fitBounds(bounds, { padding: [50, 50] });
+                    }
+                  }
+                }}
+                data-testid="button-fit-all-markers"
+              >
+                <Maximize2 className="h-4 w-4 mr-1" />
+                Fit All
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* New Submarket Input */}
@@ -201,6 +268,17 @@ export function EnhancedMarketMap({
       </CardHeader>
 
       <CardContent className="flex-1 p-0 flex flex-col">
+        {/* Info Alert when comps are loaded */}
+        {comps.length > 0 && (
+          <Alert className="mx-4 mt-4 mb-2" data-testid="comps-info-alert">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {comps.length} comparable{comps.length !== 1 ? 's' : ''} loaded on map. Use the <strong>"Fit All"</strong> button above to zoom and view all markers.
+              {comps.length === 0 && " Go to the Comps tab to import ATTOM closed sales data."}
+            </AlertDescription>
+          </Alert>
+        )}
+        
         {/* Map Container */}
         <div className="flex-1 relative min-h-[400px]">
           <MapContainer
@@ -216,6 +294,9 @@ export function EnhancedMarketMap({
 
             {/* Drawing Controls */}
             <DrawControl onPolygonCreated={handlePolygonCreated} />
+            
+            {/* Fit Bounds Control - Auto-zoom to show all markers */}
+            <FitBoundsControl subject={subject} comps={comps} />
 
             {/* Subject Property Marker */}
             <Marker position={[subject.latlng.lat, subject.latlng.lng]} icon={subjectIcon}>
