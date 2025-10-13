@@ -96,12 +96,34 @@ console.log(`[CSRF] APP_ORIGIN set to: ${APP_ORIGIN}`);
 
 function requireSameOrigin(req: any, res: any, next: any) {
   const origin = req.get('origin');
-  // Allow same-origin and no-origin (e.g., curl) in dev; tighten if needed
-  if (origin && origin !== APP_ORIGIN) {
-    console.log(`Origin mismatch: received "${origin}", expected "${APP_ORIGIN}"`);
-    return res.status(403).json({ message: 'Bad origin' });
+  
+  // Allow no-origin (e.g., curl, server-to-server)
+  if (!origin) {
+    return next();
   }
-  next();
+  
+  // Check if origin matches APP_ORIGIN exactly
+  if (origin === APP_ORIGIN) {
+    return next();
+  }
+  
+  // Allow all Replit domains (*.repl.co, *.replit.dev, *.replit.app)
+  try {
+    const originUrl = new URL(origin);
+    const hostname = originUrl.hostname;
+    
+    if (hostname.endsWith('.repl.co') || 
+        hostname.endsWith('.replit.dev') || 
+        hostname.endsWith('.replit.app')) {
+      return next();
+    }
+  } catch (err) {
+    // Invalid origin URL
+  }
+  
+  // Reject if none of the checks passed
+  console.log(`Origin mismatch: received "${origin}", expected "${APP_ORIGIN}" or valid Replit domain`);
+  return res.status(403).json({ message: 'Bad origin' });
 }
 
 // Rate limiting middleware

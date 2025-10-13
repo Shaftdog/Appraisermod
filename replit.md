@@ -118,6 +118,13 @@ The architecture is designed to be modular and scalable, with clear separation b
 
 ## Recent Changes
 
+### October 13, 2025 - CSRF Origin Fix for ATTOM Integration
+**Issue**: ATTOM property lookup was failing with 403 "Bad origin" error because Replit serves apps from multiple domains (workspace.*.repl.co and auto-generated *.replit.dev domains), but CSRF protection only allowed exact origin match.
+
+**Solution**: Updated `requireSameOrigin` middleware in server/routes.ts to accept all valid Replit domains (*.repl.co, *.replit.dev, *.replit.app) while maintaining security. This allows ATTOM API calls to work from any Replit-served domain.
+
+**Files Modified**: server/routes.ts (lines 100-130)
+
 ### October 12, 2025 - Complete Enhanced Market Analysis System
 **Overview**: Implemented enterprise-grade market analysis system with interactive mapping, regression-based trend analysis, GSE-compliant adjustments, and appraiser validation workflow.
 
