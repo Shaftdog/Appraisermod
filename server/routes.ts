@@ -632,18 +632,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate input data based on tab
       let validatedData = req.body;
       if (tabKey === 'subject') {
-        // Basic validation for subject tab fields
+        // Enhanced validation for subject tab fields including ATTOM data
         const subjectUpdateSchema = z.object({
           address: z.string().optional(),
           yearBuilt: z.string().optional(),
-          gla: z.string().optional(),
+          gla: z.string().or(z.number()).optional(),
           bedrooms: z.string().optional(),
           bathrooms: z.string().optional(),
           lotSize: z.string().optional(),
           legalDescription: z.string().optional(),
-          zoning: z.string().optional()
+          zoning: z.string().optional(),
+          // ATTOM/map specific fields
+          latlng: z.object({
+            lat: z.number(),
+            lng: z.number()
+          }).optional(),
+          attomId: z.number().optional(),
+          apn: z.string().optional(),
+          quality: z.number().optional(),
+          condition: z.number().optional()
         });
         validatedData = subjectUpdateSchema.parse(req.body);
+        
+        // Extract Subject-specific fields and update the actual subject storage
+        const subjectFields: Partial<Subject> = {};
+        if (validatedData.address) subjectFields.address = validatedData.address;
+        if (validatedData.latlng) subjectFields.latlng = validatedData.latlng;
+        if (validatedData.gla !== undefined) subjectFields.gla = typeof validatedData.gla === 'string' ? parseInt(validatedData.gla) : validatedData.gla;
+        if (validatedData.quality !== undefined) subjectFields.quality = validatedData.quality;
+        if (validatedData.condition !== undefined) subjectFields.condition = validatedData.condition;
+        
+        // Update the actual subject data if any subject-specific fields are present
+        if (Object.keys(subjectFields).length > 0) {
+          await storage.updateSubject(orderId, subjectFields);
+        }
       }
 
       // Update the tab's currentData
