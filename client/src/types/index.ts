@@ -3,12 +3,12 @@ export type RiskStatus = 'green' | 'yellow' | 'red';
 export type TabKey =
   | 'orderSummary'
   | 'subject'
+  | 'habu'
   | 'market'
   | 'comps'
   | 'sketch'
   | 'photos'
   | 'cost'
-  | 'habu'
   | 'reconciliation'
   | 'activity'
   | 'qcSignoff'
@@ -57,12 +57,12 @@ export interface Order {
 export const TAB_LABELS: Record<TabKey, string> = {
   orderSummary: 'Order Summary',
   subject: 'Subject Property',
+  habu: 'Highest & Best Use',
   market: 'Market Analysis',
   comps: 'Comparables',
   sketch: 'Sketch & GLA',
   photos: 'Photos',
   cost: 'Cost Approach',
-  habu: 'Highest & Best Use',
   reconciliation: 'Reconciliation',
   activity: 'Activity Log',
   qcSignoff: 'QC & Sign-off',

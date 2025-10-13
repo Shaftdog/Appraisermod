@@ -25,13 +25,13 @@ export function LeftNavTabs({ order }: LeftNavTabsProps) {
 
   const tabKeys: TabKey[] = [
     'orderSummary',
-    'subject', 
+    'subject',
+    'habu',
     'market',
     'comps',
     'sketch',
     'photos',
     'cost',
-    'habu',
     'reconciliation',
     'activity',
     'qcSignoff',
