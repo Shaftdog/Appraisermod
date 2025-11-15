@@ -1,0 +1,109 @@
+{
+  "orderId": "order-123",
+  "inputs": {
+    "asOfDateISO": "2025-10-13",
+    "asIfVacant": true,
+    "subject": {
+      "siteAreaSqft": 6000,
+      "topography": "level",
+      "utilities": {
+        "water": true,
+        "sewer": true,
+        "electric": true,
+        "gas": false
+      },
+      "access": "local",
+      "exposure": "interior",
+      "condition": 4,
+      "quality": 4
+    },
+    "zoning": {
+      "source": "provider",
+      "code": "R-1",
+      "description": "Single Family Residential",
+      "allowedUses": [
+        "singleFamily",
+        "vacantResidential"
+      ],
+      "minLotSizeSqft": 6000,
+      "maxDensityDUA": 7.3,
+      "maxHeightFt": 35,
+      "setbacks": {
+        "front": 25,
+        "side": 7,
+        "rear": 20
+      },
+      "notes": "Single family residential zoning with detached accessory dwelling units permitted",
+      "fetchedAt": "2025-10-13T13:49:46.940Z",
+      "providerRef": "stub:R-1"
+    },
+    "marketSignals": {},
+    "costSignals": {},
+    "candidateUses": [
+      "singleFamily"
+    ]
+  },
+  "updatedAt": "2025-10-13T13:52:21.842Z",
+  "result": {
+    "asIfVacantConclusion": {
+      "use": "singleFamily",
+      "composite": 0.7000000000000002,
+      "confidence": 0.8,
+      "narrative": "Based on the highest and best use analysis as of 10/13/2025, the subject property's highest and best use as if vacant is **Single Family Residential** with a confidence level of 80%.\\n\\nThis conclusion is supported by the following analysis:\\n• **Legal Permissibility**: Single Family Residential is legally permissible under current zoning\\n• **Physical Feasibility**: Site is well-suited for Single Family Residential development\\n• **Financial Feasibility**: Single Family Residential faces financial challenges in current market\\n"
+    },
+    "rankedUses": [
+      {
+        "use": "singleFamily",
+        "tests": [
+          {
+            "label": "Physically Possible",
+            "score": 1,
+            "rationale": "Site is well-suited for Single Family Residential development",
+            "evidence": [
+              "Site area 6,000 sqft meets minimum requirement",
+              "All essential utilities available",
+              "Local street access preferred for residential"
+            ]
+          },
+          {
+            "label": "Legally Permissible",
+            "score": 0.9,
+            "rationale": "Single Family Residential is legally permissible under current zoning",
+            "evidence": [
+              "Single Family Residential is permitted in R-1",
+              "Height limit 35 ft is adequate for use",
+              "Setback requirements significantly reduce buildable area"
+            ]
+          },
+          {
+            "label": "Financially Feasible",
+            "score": 0.45,
+            "rationale": "Single Family Residential faces financial challenges in current market",
+            "evidence": [
+              "Use-specific demand factor: 90%"
+            ]
+          },
+          {
+            "label": "Maximally Productive",
+            "score": 1,
+            "rationale": "Highest composite score among evaluated uses",
+            "evidence": [
+              "Composite rank: 1 of 1"
+            ]
+          }
+        ],
+        "composite": 0.7000000000000002,
+        "flags": []
+      }
+    ],
+    "weights": {
+      "physical": 0.25000000000000006,
+      "legal": 0.35000000000000003,
+      "financial": 0.30000000000000004,
+      "productive": 0.10000000000000002
+    },
+    "version": "2025.09.1",
+    "generatedAt": "2025-10-13T13:52:21.842Z",
+    "author": "system"
+  }
+}

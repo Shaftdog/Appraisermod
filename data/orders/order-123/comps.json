@@ -14,5 +14,69 @@
     "quality": 4,
     "condition": 4,
     "source": "attom"
+  },
+  {
+    "id": "attom-aba18d2e15e37933",
+    "address": "616 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "salePrice": 969900,
+    "saleDate": "2024-10-29",
+    "distanceMiles": 0.5,
+    "monthsSinceSale": 0,
+    "latlng": {
+      "lat": "28.753694",
+      "lng": "-81.331095"
+    },
+    "gla": 3973,
+    "quality": 4,
+    "condition": 4,
+    "source": "attom"
+  },
+  {
+    "id": "attom-aba18d2e15e37933",
+    "address": "616 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "salePrice": 969900,
+    "saleDate": "2024-10-29",
+    "distanceMiles": 0.5,
+    "monthsSinceSale": 0,
+    "latlng": {
+      "lat": "28.753694",
+      "lng": "-81.331095"
+    },
+    "gla": 3973,
+    "quality": 4,
+    "condition": 4,
+    "source": "attom"
+  },
+  {
+    "id": "attom-ce2c56c1bbe1ce7b",
+    "address": "613 WASHINGTON OAKS CT, LAKE MARY, FL 32746",
+    "salePrice": 977000,
+    "saleDate": "2024-10-25",
+    "distanceMiles": 0.5,
+    "monthsSinceSale": 0,
+    "latlng": {
+      "lat": "28.753889",
+      "lng": "-81.330524"
+    },
+    "gla": 3694,
+    "quality": 4,
+    "condition": 4,
+    "source": "attom"
+  },
+  {
+    "id": "attom-aa70551bb3a2cb4a",
+    "address": "124 CITRA LN, LAKE MARY, FL 32746",
+    "salePrice": 1143380,
+    "saleDate": "2025-07-14",
+    "distanceMiles": 0.5,
+    "monthsSinceSale": 0,
+    "latlng": {
+      "lat": "28.753662",
+      "lng": "-81.329699"
+    },
+    "gla": 1800,
+    "quality": 4,
+    "condition": 4,
+    "source": "attom"
   }
 ]
