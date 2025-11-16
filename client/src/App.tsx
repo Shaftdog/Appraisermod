@@ -14,6 +14,14 @@ import NotFound from "@/pages/not-found";
 import OrderPage from "@/pages/orders/[orderId]";
 import MarketEnhancedPage from "@/pages/orders/[orderId]/market-enhanced";
 
+// Course platform pages
+import CoursesPage from "@/pages/courses/CoursesPage";
+import CourseDetail from "@/pages/courses/CourseDetail";
+import LessonViewer from "@/pages/courses/LessonViewer";
+import Dashboard from "@/pages/courses/Dashboard";
+import CourseBuilder from "@/pages/courses/admin/CourseBuilder";
+import AdminAnalytics from "@/pages/courses/AdminAnalytics";
+
 function Router() {
   return (
     <Switch>
@@ -40,6 +48,38 @@ function Router() {
         </ProtectedRoute>
       )} />
       
+      {/* Course Platform Routes */}
+      <Route path="/dashboard" component={() => (
+        <ProtectedRoute>
+          <Dashboard />
+        </ProtectedRoute>
+      )} />
+      <Route path="/courses" component={() => (
+        <ProtectedRoute>
+          <CoursesPage />
+        </ProtectedRoute>
+      )} />
+      <Route path="/courses/:slug" component={() => (
+        <ProtectedRoute>
+          <CourseDetail />
+        </ProtectedRoute>
+      )} />
+      <Route path="/courses/:courseSlug/lessons/:lessonId" component={() => (
+        <ProtectedRoute>
+          <LessonViewer />
+        </ProtectedRoute>
+      )} />
+      <Route path="/admin/courses" component={() => (
+        <ProtectedRoute>
+          <CourseBuilder />
+        </ProtectedRoute>
+      )} />
+      <Route path="/admin/analytics" component={() => (
+        <ProtectedRoute>
+          <AdminAnalytics />
+        </ProtectedRoute>
+      )} />
+
       {/* Order Routes */}
       {/* Enhanced Market Analysis - must come before generic :tab route */}
       <Route path="/orders/:orderId/market-enhanced" component={() => (
