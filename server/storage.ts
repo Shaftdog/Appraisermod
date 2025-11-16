@@ -150,6 +150,47 @@ export interface IStorage {
   createEnrollment(enrollment: any): Promise<any>;
   updateEnrollmentBySubscription(subscriptionId: string, updates: any): Promise<void>;
   createEvent(event: any): Promise<any>;
+
+  // Products CRUD
+  getAllProducts(): Promise<any[]>;
+  getProduct(id: string): Promise<any | undefined>;
+  createProduct(product: any): Promise<any>;
+  updateProduct(id: string, updates: any): Promise<any>;
+
+  // Courses CRUD
+  getAllCourses(publishedOnly?: boolean): Promise<any[]>;
+  getCourseBySlug(slug: string): Promise<any | undefined>;
+  createCourse(course: any): Promise<any>;
+  updateCourse(id: string, updates: any): Promise<any>;
+  publishCourse(id: string, isPublished: boolean): Promise<any>;
+
+  // Modules CRUD
+  createModule(module: any): Promise<any>;
+  updateModule(id: string, updates: any): Promise<any>;
+  deleteModule(id: string): Promise<void>;
+
+  // Lessons CRUD
+  getLesson(id: string): Promise<any | undefined>;
+  createLesson(lesson: any): Promise<any>;
+  updateLesson(id: string, updates: any): Promise<any>;
+  deleteLesson(id: string): Promise<void>;
+
+  // Progress tracking
+  getCourseProgress(userId: string, courseId: string): Promise<any>;
+  updateLessonProgress(userId: string, lessonId: string, progress: any): Promise<any>;
+
+  // Comments
+  getLessonComments(lessonId: string): Promise<any[]>;
+  createLessonComment(comment: any): Promise<any>;
+  updateLessonComment(id: string, userId: string, content: string): Promise<any>;
+  deleteLessonComment(id: string, userId: string): Promise<void>;
+
+  // Gamification
+  getUserPoints(userId: string): Promise<number>;
+  awardPoints(userId: string, points: number, reason: string): Promise<void>;
+  getLeaderboard(period: 'week' | 'month' | 'alltime'): Promise<any[]>;
+  getUserBadges(userId: string): Promise<any[]>;
+  getAllBadges(): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3477,6 +3518,453 @@ export class DatabaseStorage implements IStorage {
 
     await db.insert(events).values(newEvent);
     return newEvent;
+  }
+
+  // Products CRUD
+  async getAllProducts(): Promise<any[]> {
+    const { products } = await import("@shared/schema");
+    return await db.select().from(products);
+  }
+
+  async getProduct(id: string): Promise<any | undefined> {
+    const { products } = await import("@shared/schema");
+    const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createProduct(product: any): Promise<any> {
+    const { products } = await import("@shared/schema");
+    const newProduct = {
+      id: randomUUID(),
+      ...product,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.insert(products).values(newProduct);
+    return newProduct;
+  }
+
+  async updateProduct(id: string, updates: any): Promise<any> {
+    const { products } = await import("@shared/schema");
+    await db.update(products).set({ ...updates, updatedAt: new Date() }).where(eq(products.id, id));
+    return this.getProduct(id);
+  }
+
+  // Courses CRUD
+  async getAllCourses(publishedOnly = false): Promise<any[]> {
+    const { courses, modules, lessons } = await import("@shared/schema");
+
+    let query = db.select().from(courses);
+    if (publishedOnly) {
+      query = query.where(eq(courses.isPublished, 1)) as any;
+    }
+
+    const allCourses = await query;
+
+    // Load modules and lessons for each course
+    const coursesWithData = await Promise.all(
+      allCourses.map(async (course) => {
+        const courseModules = await db.select().from(modules).where(eq(modules.courseId, course.id));
+
+        const modulesWithLessons = await Promise.all(
+          courseModules.map(async (module) => {
+            const moduleLessons = await db.select().from(lessons).where(eq(lessons.moduleId, module.id));
+            return { ...module, lessons: moduleLessons };
+          })
+        );
+
+        return { ...course, modules: modulesWithLessons };
+      })
+    );
+
+    return coursesWithData;
+  }
+
+  async getCourseBySlug(slug: string): Promise<any | undefined> {
+    const { courses, modules, lessons } = await import("@shared/schema");
+
+    const result = await db.select().from(courses).where(eq(courses.slug, slug)).limit(1);
+    if (!result[0]) return undefined;
+
+    const course = result[0];
+    const courseModules = await db.select().from(modules).where(eq(modules.courseId, course.id));
+
+    const modulesWithLessons = await Promise.all(
+      courseModules.map(async (module) => {
+        const moduleLessons = await db.select().from(lessons).where(eq(lessons.moduleId, module.id));
+        return { ...module, lessons: moduleLessons };
+      })
+    );
+
+    return { ...course, modules: modulesWithLessons };
+  }
+
+  async createCourse(course: any): Promise<any> {
+    const { courses } = await import("@shared/schema");
+    const newCourse = {
+      id: randomUUID(),
+      ...course,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.insert(courses).values(newCourse);
+    return newCourse;
+  }
+
+  async updateCourse(id: string, updates: any): Promise<any> {
+    const { courses } = await import("@shared/schema");
+    await db.update(courses).set({ ...updates, updatedAt: new Date() }).where(eq(courses.id, id));
+    return this.getCourseBySlug(updates.slug || (await this.getProduct(id))?.slug);
+  }
+
+  async publishCourse(id: string, isPublished: boolean): Promise<any> {
+    const { courses } = await import("@shared/schema");
+    const updates: any = { isPublished: isPublished ? 1 : 0, updatedAt: new Date() };
+    if (isPublished) {
+      updates.publishedAt = new Date();
+    }
+    await db.update(courses).set(updates).where(eq(courses.id, id));
+
+    // Get course slug to return full data
+    const course = await db.select().from(courses).where(eq(courses.id, id)).limit(1);
+    return this.getCourseBySlug(course[0].slug);
+  }
+
+  // Modules CRUD
+  async createModule(module: any): Promise<any> {
+    const { modules } = await import("@shared/schema");
+    const newModule = {
+      id: randomUUID(),
+      ...module,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.insert(modules).values(newModule);
+    return newModule;
+  }
+
+  async updateModule(id: string, updates: any): Promise<any> {
+    const { modules } = await import("@shared/schema");
+    await db.update(modules).set({ ...updates, updatedAt: new Date() }).where(eq(modules.id, id));
+    const result = await db.select().from(modules).where(eq(modules.id, id)).limit(1);
+    return result[0];
+  }
+
+  async deleteModule(id: string): Promise<void> {
+    const { modules, lessons } = await import("@shared/schema");
+    // Delete all lessons in this module first
+    await db.delete(lessons).where(eq(lessons.moduleId, id));
+    // Delete the module
+    await db.delete(modules).where(eq(modules.id, id));
+  }
+
+  // Lessons CRUD
+  async getLesson(id: string): Promise<any | undefined> {
+    const { lessons } = await import("@shared/schema");
+    const result = await db.select().from(lessons).where(eq(lessons.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createLesson(lesson: any): Promise<any> {
+    const { lessons } = await import("@shared/schema");
+    const newLesson = {
+      id: randomUUID(),
+      ...lesson,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.insert(lessons).values(newLesson);
+    return newLesson;
+  }
+
+  async updateLesson(id: string, updates: any): Promise<any> {
+    const { lessons } = await import("@shared/schema");
+    await db.update(lessons).set({ ...updates, updatedAt: new Date() }).where(eq(lessons.id, id));
+    return this.getLesson(id);
+  }
+
+  async deleteLesson(id: string): Promise<void> {
+    const { lessons, lessonProgress, lessonComments, toolLinks } = await import("@shared/schema");
+    // Delete related data
+    await db.delete(lessonProgress).where(eq(lessonProgress.lessonId, id));
+    await db.delete(lessonComments).where(eq(lessonComments.lessonId, id));
+    await db.delete(toolLinks).where(eq(toolLinks.lessonId, id));
+    // Delete the lesson
+    await db.delete(lessons).where(eq(lessons.id, id));
+  }
+
+  // Progress tracking
+  async getCourseProgress(userId: string, courseId: string): Promise<any> {
+    const { courses, modules, lessons, lessonProgress } = await import("@shared/schema");
+
+    // Get course with modules and lessons
+    const course = await db.select().from(courses).where(eq(courses.id, courseId)).limit(1);
+    if (!course[0]) return null;
+
+    const courseModules = await db.select().from(modules).where(eq(modules.courseId, courseId));
+
+    let totalLessons = 0;
+    let completedLessons = 0;
+    let totalWatchTime = 0;
+
+    const modulesWithProgress = await Promise.all(
+      courseModules.map(async (module) => {
+        const moduleLessons = await db.select().from(lessons).where(eq(lessons.moduleId, module.id));
+
+        const lessonsWithProgress = await Promise.all(
+          moduleLessons.map(async (lesson) => {
+            totalLessons++;
+            const progress = await db
+              .select()
+              .from(lessonProgress)
+              .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.lessonId, lesson.id)))
+              .limit(1);
+
+            if (progress[0]) {
+              if (progress[0].isCompleted) completedLessons++;
+              totalWatchTime += progress[0].watchTimeSeconds || 0;
+            }
+
+            return { ...lesson, progress: progress[0] || null };
+          })
+        );
+
+        return { ...module, lessons: lessonsWithProgress };
+      })
+    );
+
+    const percentComplete = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+
+    return {
+      course: course[0],
+      modules: modulesWithProgress,
+      stats: {
+        totalLessons,
+        completedLessons,
+        percentComplete,
+        totalWatchTime,
+      },
+    };
+  }
+
+  async updateLessonProgress(userId: string, lessonId: string, progress: any): Promise<any> {
+    const { lessonProgress } = await import("@shared/schema");
+
+    // Check if progress exists
+    const existing = await db
+      .select()
+      .from(lessonProgress)
+      .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.lessonId, lessonId)))
+      .limit(1);
+
+    const isCompleted = progress.percentComplete >= 75;
+    const now = new Date();
+
+    if (existing[0]) {
+      // Update existing
+      const wasNotCompleted = !existing[0].isCompleted;
+      const updates: any = {
+        percentComplete: progress.percentComplete,
+        watchTimeSeconds: progress.watchTimeSeconds,
+        isCompleted: isCompleted ? 1 : 0,
+        lastWatchedAt: now,
+        updatedAt: now,
+      };
+
+      if (isCompleted && wasNotCompleted) {
+        updates.completedAt = now;
+
+        // Award points for completing lesson
+        await this.createEvent({
+          userId,
+          eventName: 'lesson_completed',
+          eventData: { lessonId },
+        });
+
+        await this.awardPoints(userId, 5, 'lesson_completed');
+      }
+
+      await db
+        .update(lessonProgress)
+        .set(updates)
+        .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.lessonId, lessonId)));
+
+      return { ...existing[0], ...updates };
+    } else {
+      // Create new
+      const newProgress = {
+        id: randomUUID(),
+        userId,
+        lessonId,
+        percentComplete: progress.percentComplete,
+        watchTimeSeconds: progress.watchTimeSeconds,
+        isCompleted: isCompleted ? 1 : 0,
+        completedAt: isCompleted ? now : null,
+        lastWatchedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await db.insert(lessonProgress).values(newProgress);
+
+      if (isCompleted) {
+        await this.createEvent({
+          userId,
+          eventName: 'lesson_completed',
+          eventData: { lessonId },
+        });
+
+        await this.awardPoints(userId, 5, 'lesson_completed');
+      }
+
+      return newProgress;
+    }
+  }
+
+  // Comments
+  async getLessonComments(lessonId: string): Promise<any[]> {
+    const { lessonComments } = await import("@shared/schema");
+    const comments = await db
+      .select()
+      .from(lessonComments)
+      .where(and(eq(lessonComments.lessonId, lessonId), eq(lessonComments.isDeleted, 0)));
+
+    // Get user info for each comment
+    const commentsWithUsers = await Promise.all(
+      comments.map(async (comment) => {
+        const user = await this.getUser(comment.userId);
+        return { ...comment, user };
+      })
+    );
+
+    return commentsWithUsers;
+  }
+
+  async createLessonComment(comment: any): Promise<any> {
+    const { lessonComments } = await import("@shared/schema");
+    const newComment = {
+      id: randomUUID(),
+      ...comment,
+      isEdited: 0,
+      isDeleted: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.insert(lessonComments).values(newComment);
+    return newComment;
+  }
+
+  async updateLessonComment(id: string, userId: string, content: string): Promise<any> {
+    const { lessonComments } = await import("@shared/schema");
+
+    // Verify ownership
+    const comment = await db.select().from(lessonComments).where(eq(lessonComments.id, id)).limit(1);
+    if (!comment[0] || comment[0].userId !== userId) {
+      throw new Error('Not authorized to update this comment');
+    }
+
+    await db
+      .update(lessonComments)
+      .set({ content, isEdited: 1, updatedAt: new Date() })
+      .where(eq(lessonComments.id, id));
+
+    const updated = await db.select().from(lessonComments).where(eq(lessonComments.id, id)).limit(1);
+    return updated[0];
+  }
+
+  async deleteLessonComment(id: string, userId: string): Promise<void> {
+    const { lessonComments } = await import("@shared/schema");
+
+    // Verify ownership
+    const comment = await db.select().from(lessonComments).where(eq(lessonComments.id, id)).limit(1);
+    if (!comment[0] || comment[0].userId !== userId) {
+      throw new Error('Not authorized to delete this comment');
+    }
+
+    // Soft delete
+    await db
+      .update(lessonComments)
+      .set({ isDeleted: 1, updatedAt: new Date() })
+      .where(eq(lessonComments.id, id));
+  }
+
+  // Gamification
+  async getUserPoints(userId: string): Promise<number> {
+    const { pointsLedger } = await import("@shared/schema");
+    const result = await db.select().from(pointsLedger).where(eq(pointsLedger.userId, userId));
+    return result.reduce((sum, entry) => sum + entry.points, 0);
+  }
+
+  async awardPoints(userId: string, points: number, reason: string): Promise<void> {
+    const { pointsLedger } = await import("@shared/schema");
+    await db.insert(pointsLedger).values({
+      id: randomUUID(),
+      userId,
+      points,
+      reason,
+      createdAt: new Date(),
+    });
+  }
+
+  async getLeaderboard(period: 'week' | 'month' | 'alltime'): Promise<any[]> {
+    const { pointsLedger } = await import("@shared/schema");
+
+    let query = db.select().from(pointsLedger);
+
+    // Filter by time period
+    if (period === 'week') {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      query = query.where(eq(pointsLedger.createdAt, weekAgo)) as any;
+    } else if (period === 'month') {
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      query = query.where(eq(pointsLedger.createdAt, monthAgo)) as any;
+    }
+
+    const entries = await query;
+
+    // Aggregate by user
+    const userPoints = new Map<string, number>();
+    for (const entry of entries) {
+      const current = userPoints.get(entry.userId) || 0;
+      userPoints.set(entry.userId, current + entry.points);
+    }
+
+    // Convert to array and add user info
+    const leaderboard = await Promise.all(
+      Array.from(userPoints.entries()).map(async ([userId, points]) => {
+        const user = await this.getUser(userId);
+        return { user, points };
+      })
+    );
+
+    // Sort by points descending
+    return leaderboard.sort((a, b) => b.points - a.points).slice(0, 100);
+  }
+
+  async getUserBadges(userId: string): Promise<any[]> {
+    const { userBadges, badges } = await import("@shared/schema");
+
+    const userBadgeRecords = await db
+      .select()
+      .from(userBadges)
+      .where(eq(userBadges.userId, userId));
+
+    // Get badge details
+    const badgesWithDetails = await Promise.all(
+      userBadgeRecords.map(async (userBadge) => {
+        const badge = await db.select().from(badges).where(eq(badges.id, userBadge.badgeId)).limit(1);
+        return { ...userBadge, badge: badge[0] };
+      })
+    );
+
+    return badgesWithDetails;
+  }
+
+  async getAllBadges(): Promise<any[]> {
+    const { badges } = await import("@shared/schema");
+    return await db.select().from(badges).where(eq(badges.isActive, 1));
   }
 }
 

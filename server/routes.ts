@@ -3749,6 +3749,395 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // COURSES / LESSONS CRUD ROUTES
+  // ============================================================================
+
+  // Get all products
+  app.get("/api/products", async (req, res) => {
+    try {
+      const products = await storage.getAllProducts();
+      res.json(products);
+    } catch (error: any) {
+      console.error("Error fetching products:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch products" });
+    }
+  });
+
+  // Get single product
+  app.get("/api/products/:id", async (req, res) => {
+    try {
+      const product = await storage.getProduct(req.params.id);
+      if (!product) {
+        return res.status(404).json({ message: 'Product not found' });
+      }
+      res.json(product);
+    } catch (error: any) {
+      console.error("Error fetching product:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch product" });
+    }
+  });
+
+  // Create product (admin only)
+  app.post("/api/products", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const product = await storage.createProduct(req.body);
+      res.status(201).json(product);
+    } catch (error: any) {
+      console.error("Error creating product:", error);
+      res.status(500).json({ message: error.message || "Failed to create product" });
+    }
+  });
+
+  // Update product (admin only)
+  app.put("/api/products/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const product = await storage.updateProduct(req.params.id, req.body);
+      res.json(product);
+    } catch (error: any) {
+      console.error("Error updating product:", error);
+      res.status(500).json({ message: error.message || "Failed to update product" });
+    }
+  });
+
+  // Get all courses (with optional filters)
+  app.get("/api/courses", async (req, res) => {
+    try {
+      const { published } = req.query;
+      const courses = await storage.getAllCourses(published === 'true');
+      res.json(courses);
+    } catch (error: any) {
+      console.error("Error fetching courses:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch courses" });
+    }
+  });
+
+  // Get single course with modules and lessons
+  app.get("/api/courses/:slug", async (req, res) => {
+    try {
+      const course = await storage.getCourseBySlug(req.params.slug);
+      if (!course) {
+        return res.status(404).json({ message: 'Course not found' });
+      }
+      res.json(course);
+    } catch (error: any) {
+      console.error("Error fetching course:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch course" });
+    }
+  });
+
+  // Create course (admin only)
+  app.post("/api/courses", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const course = await storage.createCourse(req.body);
+      res.status(201).json(course);
+    } catch (error: any) {
+      console.error("Error creating course:", error);
+      res.status(500).json({ message: error.message || "Failed to create course" });
+    }
+  });
+
+  // Update course (admin only)
+  app.put("/api/courses/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const course = await storage.updateCourse(req.params.id, req.body);
+      res.json(course);
+    } catch (error: any) {
+      console.error("Error updating course:", error);
+      res.status(500).json({ message: error.message || "Failed to update course" });
+    }
+  });
+
+  // Publish/unpublish course (admin only)
+  app.post("/api/courses/:id/publish", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const { isPublished } = req.body;
+      const course = await storage.publishCourse(req.params.id, isPublished);
+      res.json(course);
+    } catch (error: any) {
+      console.error("Error publishing course:", error);
+      res.status(500).json({ message: error.message || "Failed to publish course" });
+    }
+  });
+
+  // Create module (admin only)
+  app.post("/api/courses/:courseId/modules", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const module = await storage.createModule({ ...req.body, courseId: req.params.courseId });
+      res.status(201).json(module);
+    } catch (error: any) {
+      console.error("Error creating module:", error);
+      res.status(500).json({ message: error.message || "Failed to create module" });
+    }
+  });
+
+  // Update module (admin only)
+  app.put("/api/modules/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const module = await storage.updateModule(req.params.id, req.body);
+      res.json(module);
+    } catch (error: any) {
+      console.error("Error updating module:", error);
+      res.status(500).json({ message: error.message || "Failed to update module" });
+    }
+  });
+
+  // Delete module (admin only)
+  app.delete("/api/modules/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      await storage.deleteModule(req.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      console.error("Error deleting module:", error);
+      res.status(500).json({ message: error.message || "Failed to delete module" });
+    }
+  });
+
+  // Create lesson (admin only)
+  app.post("/api/modules/:moduleId/lessons", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const lesson = await storage.createLesson({ ...req.body, moduleId: req.params.moduleId });
+      res.status(201).json(lesson);
+    } catch (error: any) {
+      console.error("Error creating lesson:", error);
+      res.status(500).json({ message: error.message || "Failed to create lesson" });
+    }
+  });
+
+  // Get single lesson
+  app.get("/api/lessons/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const lesson = await storage.getLesson(req.params.id);
+      if (!lesson) {
+        return res.status(404).json({ message: 'Lesson not found' });
+      }
+      res.json(lesson);
+    } catch (error: any) {
+      console.error("Error fetching lesson:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch lesson" });
+    }
+  });
+
+  // Update lesson (admin only)
+  app.put("/api/lessons/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const lesson = await storage.updateLesson(req.params.id, req.body);
+      res.json(lesson);
+    } catch (error: any) {
+      console.error("Error updating lesson:", error);
+      res.status(500).json({ message: error.message || "Failed to update lesson" });
+    }
+  });
+
+  // Delete lesson (admin only)
+  app.delete("/api/lessons/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      await storage.deleteLesson(req.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      console.error("Error deleting lesson:", error);
+      res.status(500).json({ message: error.message || "Failed to delete lesson" });
+    }
+  });
+
+  // Get user's progress for a course
+  app.get("/api/courses/:courseId/progress", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const progress = await storage.getCourseProgress(user.id, req.params.courseId);
+      res.json(progress);
+    } catch (error: any) {
+      console.error("Error fetching course progress:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch progress" });
+    }
+  });
+
+  // Update lesson progress
+  app.post("/api/lessons/:lessonId/progress", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const { percentComplete, watchTimeSeconds } = req.body;
+
+      const progress = await storage.updateLessonProgress(user.id, req.params.lessonId, {
+        percentComplete,
+        watchTimeSeconds,
+      });
+
+      res.json(progress);
+    } catch (error: any) {
+      console.error("Error updating lesson progress:", error);
+      res.status(500).json({ message: error.message || "Failed to update progress" });
+    }
+  });
+
+  // Get lesson comments
+  app.get("/api/lessons/:lessonId/comments", async (req, res) => {
+    try {
+      const comments = await storage.getLessonComments(req.params.lessonId);
+      res.json(comments);
+    } catch (error: any) {
+      console.error("Error fetching comments:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch comments" });
+    }
+  });
+
+  // Post lesson comment
+  app.post("/api/lessons/:lessonId/comments", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const { content, parentId } = req.body;
+
+      const comment = await storage.createLessonComment({
+        lessonId: req.params.lessonId,
+        userId: user.id,
+        content,
+        parentId,
+      });
+
+      // Award points for commenting
+      await storage.createEvent({
+        userId: user.id,
+        eventName: 'comment_posted',
+        eventData: { lessonId: req.params.lessonId, commentId: comment.id },
+      });
+
+      await storage.awardPoints(user.id, 2, 'comment_posted');
+
+      res.status(201).json(comment);
+    } catch (error: any) {
+      console.error("Error creating comment:", error);
+      res.status(500).json({ message: error.message || "Failed to create comment" });
+    }
+  });
+
+  // Update comment
+  app.put("/api/comments/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const { content } = req.body;
+
+      const comment = await storage.updateLessonComment(req.params.id, user.id, content);
+      res.json(comment);
+    } catch (error: any) {
+      console.error("Error updating comment:", error);
+      res.status(500).json({ message: error.message || "Failed to update comment" });
+    }
+  });
+
+  // Delete comment
+  app.delete("/api/comments/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      await storage.deleteLessonComment(req.params.id, user.id);
+      res.status(204).send();
+    } catch (error: any) {
+      console.error("Error deleting comment:", error);
+      res.status(500).json({ message: error.message || "Failed to delete comment" });
+    }
+  });
+
+  // Get user's points
+  app.get("/api/gamification/points", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const points = await storage.getUserPoints(user.id);
+      res.json({ total: points });
+    } catch (error: any) {
+      console.error("Error fetching points:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch points" });
+    }
+  });
+
+  // Get leaderboard
+  app.get("/api/gamification/leaderboard", async (req, res) => {
+    try {
+      const { period } = req.query;
+      const leaderboard = await storage.getLeaderboard(period as 'week' | 'month' | 'alltime');
+      res.json(leaderboard);
+    } catch (error: any) {
+      console.error("Error fetching leaderboard:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch leaderboard" });
+    }
+  });
+
+  // Get user's badges
+  app.get("/api/gamification/badges", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const badges = await storage.getUserBadges(user.id);
+      res.json(badges);
+    } catch (error: any) {
+      console.error("Error fetching badges:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch badges" });
+    }
+  });
+
+  // Get all available badges
+  app.get("/api/gamification/badges/all", async (req, res) => {
+    try {
+      const badges = await storage.getAllBadges();
+      res.json(badges);
+    } catch (error: any) {
+      console.error("Error fetching badges:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch badges" });
+    }
+  });
+
+  // ============================================================================
   // VIDEO / MUX ROUTES
   // ============================================================================
 
