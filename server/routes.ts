@@ -3686,6 +3686,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
               eventData: { productId, sessionId: session.id },
             });
 
+            // Send welcome email
+            try {
+              const { sendWelcomeEmail } = await import('./lib/email');
+              const user = await storage.getUser(userId);
+              const product = await storage.getProduct(productId);
+
+              if (user && product) {
+                // Get course for the product
+                const courses = await storage.getAllCourses();
+                const course = courses.find((c: any) => c.productId === productId);
+
+                if (course) {
+                  await sendWelcomeEmail(user, course);
+                }
+              }
+            } catch (emailError) {
+              console.error('Failed to send welcome email:', emailError);
+            }
+
             console.log(`✅ Enrollment created for user ${userId}, product ${productId}`);
           }
           break;

@@ -202,6 +202,10 @@ export class DatabaseStorage implements IStorage {
     try {
       // Initialize test users first
       await this.initializeTestUsers();
+
+      // Initialize course platform seeds (badges, sample course)
+      const { initializeSeeds } = await import("./lib/seedData");
+      await initializeSeeds();
       
       // Check if we already have sample data
       const existingOrders = await db.select().from(orders).limit(1);
