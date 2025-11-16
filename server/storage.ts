@@ -143,6 +143,13 @@ export interface IStorage {
   getAdjustmentValidation(id: string): Promise<AdjustmentValidation | undefined>;
   validateAdjustments(params: ValidateAdjustments, userId: string): Promise<AdjustmentValidation>;
   updateValidationStatus(id: string, status: 'approved' | 'rejected' | 'needs-review', notes?: string): Promise<AdjustmentValidation>;
+
+  // Course Platform methods
+  getEnrollmentByUserAndProduct(userId: string, productId: string): Promise<any | undefined>;
+  getUserEnrollments(userId: string): Promise<any[]>;
+  createEnrollment(enrollment: any): Promise<any>;
+  updateEnrollmentBySubscription(subscriptionId: string, updates: any): Promise<void>;
+  createEvent(event: any): Promise<any>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3414,6 +3421,62 @@ export class DatabaseStorage implements IStorage {
     const slope = b + 2 * c * meanMonth;
     
     return { slope, r2, coefficients: [a, b, c] };
+  }
+
+  // ============================================================================
+  // COURSE PLATFORM METHODS
+  // ============================================================================
+
+  async getEnrollmentByUserAndProduct(userId: string, productId: string): Promise<any | undefined> {
+    const { enrollments } = await import("@shared/schema");
+    const result = await db
+      .select()
+      .from(enrollments)
+      .where(and(eq(enrollments.userId, userId), eq(enrollments.productId, productId)))
+      .limit(1);
+
+    return result[0];
+  }
+
+  async getUserEnrollments(userId: string): Promise<any[]> {
+    const { enrollments } = await import("@shared/schema");
+    return await db
+      .select()
+      .from(enrollments)
+      .where(eq(enrollments.userId, userId));
+  }
+
+  async createEnrollment(enrollment: any): Promise<any> {
+    const { enrollments } = await import("@shared/schema");
+    const newEnrollment = {
+      id: randomUUID(),
+      ...enrollment,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await db.insert(enrollments).values(newEnrollment);
+    return newEnrollment;
+  }
+
+  async updateEnrollmentBySubscription(subscriptionId: string, updates: any): Promise<void> {
+    const { enrollments } = await import("@shared/schema");
+    await db
+      .update(enrollments)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(enrollments.stripeSubscriptionId, subscriptionId));
+  }
+
+  async createEvent(event: any): Promise<any> {
+    const { events } = await import("@shared/schema");
+    const newEvent = {
+      id: randomUUID(),
+      ...event,
+      occurredAt: new Date(),
+    };
+
+    await db.insert(events).values(newEvent);
+    return newEvent;
   }
 }
 

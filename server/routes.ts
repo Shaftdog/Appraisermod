@@ -3560,6 +3560,378 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // BILLING / STRIPE ROUTES
+  // ============================================================================
+
+  // Import Stripe helpers
+  const {
+    stripe,
+    createCheckoutSession,
+    createOneTimeCheckoutSession,
+    createCustomerPortalSession,
+    constructWebhookEvent
+  } = await import("./lib/stripe");
+
+  // Create checkout session
+  app.post("/api/billing/create-checkout", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const { priceId, productId } = req.body;
+
+      if (!priceId) {
+        return res.status(400).json({ message: 'priceId is required' });
+      }
+
+      if (!stripe) {
+        return res.status(503).json({ message: 'Payment system not configured' });
+      }
+
+      // Check if user already has an active enrollment for this product
+      if (productId) {
+        const existingEnrollment = await storage.getEnrollmentByUserAndProduct(user.id, productId);
+        if (existingEnrollment && existingEnrollment.status === 'active') {
+          return res.status(400).json({ message: 'You already have access to this product' });
+        }
+      }
+
+      const session = await createCheckoutSession({
+        priceId,
+        customerEmail: user.email,
+        successUrl: `${APP_ORIGIN}/courses?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${APP_ORIGIN}/courses`,
+        metadata: {
+          userId: user.id,
+          productId: productId || '',
+        },
+      });
+
+      res.json({ sessionId: session.id, url: session.url });
+    } catch (error: any) {
+      console.error("Error creating checkout session:", error);
+      res.status(500).json({ message: error.message || "Failed to create checkout session" });
+    }
+  });
+
+  // Create customer portal session
+  app.post("/api/billing/portal", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+
+      if (!stripe) {
+        return res.status(503).json({ message: 'Payment system not configured' });
+      }
+
+      // Get user's stripe customer ID from their enrollment
+      const enrollments = await storage.getUserEnrollments(user.id);
+      const enrollment = enrollments.find(e => e.stripeCustomerId);
+
+      if (!enrollment?.stripeCustomerId) {
+        return res.status(400).json({ message: 'No billing account found' });
+      }
+
+      const session = await createCustomerPortalSession(
+        enrollment.stripeCustomerId,
+        `${APP_ORIGIN}/courses`
+      );
+
+      res.json({ url: session.url });
+    } catch (error: any) {
+      console.error("Error creating portal session:", error);
+      res.status(500).json({ message: error.message || "Failed to create portal session" });
+    }
+  });
+
+  // Stripe webhook handler
+  app.post("/api/billing/webhook", async (req, res) => {
+    try {
+      const signature = req.headers['stripe-signature'];
+
+      if (!signature) {
+        return res.status(400).send('Missing stripe-signature header');
+      }
+
+      if (!stripe) {
+        return res.status(503).send('Stripe not configured');
+      }
+
+      // Get raw body for signature verification
+      const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+
+      const event = constructWebhookEvent(rawBody, signature as string);
+
+      // Handle the event
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object as any;
+          const userId = session.metadata?.userId;
+          const productId = session.metadata?.productId;
+
+          if (userId && productId) {
+            // Create enrollment
+            await storage.createEnrollment({
+              userId,
+              productId,
+              status: 'active',
+              source: 'purchase',
+              stripeCustomerId: session.customer as string,
+              stripeSubscriptionId: session.subscription as string,
+              startedAt: new Date().toISOString(),
+            });
+
+            // Create purchase event
+            await storage.createEvent({
+              userId,
+              eventName: 'purchase_completed',
+              eventData: { productId, sessionId: session.id },
+            });
+
+            console.log(`✅ Enrollment created for user ${userId}, product ${productId}`);
+          }
+          break;
+        }
+
+        case 'customer.subscription.updated': {
+          const subscription = event.data.object as any;
+
+          // Update enrollment status based on subscription status
+          await storage.updateEnrollmentBySubscription(subscription.id, {
+            status: subscription.status === 'active' ? 'active' :
+                    subscription.status === 'canceled' ? 'cancelled' :
+                    subscription.status === 'past_due' ? 'grace' : 'expired',
+          });
+          break;
+        }
+
+        case 'customer.subscription.deleted': {
+          const subscription = event.data.object as any;
+
+          // Mark enrollment as cancelled
+          await storage.updateEnrollmentBySubscription(subscription.id, {
+            status: 'cancelled',
+          });
+          break;
+        }
+
+        case 'invoice.payment_failed': {
+          const invoice = event.data.object as any;
+
+          // Update enrollment to grace period
+          if (invoice.subscription) {
+            await storage.updateEnrollmentBySubscription(invoice.subscription as string, {
+              status: 'grace',
+            });
+          }
+          break;
+        }
+
+        default:
+          console.log(`Unhandled event type: ${event.type}`);
+      }
+
+      res.json({ received: true });
+    } catch (error: any) {
+      console.error("Webhook error:", error);
+      res.status(400).send(`Webhook Error: ${error.message}`);
+    }
+  });
+
+  // Get user's enrollments
+  app.get("/api/billing/enrollments", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const enrollments = await storage.getUserEnrollments(user.id);
+      res.json(enrollments);
+    } catch (error: any) {
+      console.error("Error fetching enrollments:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch enrollments" });
+    }
+  });
+
+  // ============================================================================
+  // VIDEO / MUX ROUTES
+  // ============================================================================
+
+  const {
+    mux,
+    createDirectUpload,
+    createAssetFromUrl,
+    getAsset,
+    deleteAsset,
+    createSignedPlaybackUrl,
+    verifyWebhookSignature,
+    getUpload
+  } = await import("./lib/mux");
+
+  // Create direct upload URL (admin only)
+  app.post("/api/videos/create-upload", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+
+      // Only admins can upload videos
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      if (!mux) {
+        return res.status(503).json({ message: 'Video service not configured' });
+      }
+
+      const upload = await createDirectUpload();
+      res.json(upload);
+    } catch (error: any) {
+      console.error("Error creating upload:", error);
+      res.status(500).json({ message: error.message || "Failed to create upload" });
+    }
+  });
+
+  // Create asset from URL (admin only)
+  app.post("/api/videos/create-asset", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const { url } = req.body;
+
+      if (!url) {
+        return res.status(400).json({ message: 'url is required' });
+      }
+
+      if (!mux) {
+        return res.status(503).json({ message: 'Video service not configured' });
+      }
+
+      const asset = await createAssetFromUrl(url);
+      res.json(asset);
+    } catch (error: any) {
+      console.error("Error creating asset:", error);
+      res.status(500).json({ message: error.message || "Failed to create asset" });
+    }
+  });
+
+  // Get asset details (admin only)
+  app.get("/api/videos/asset/:assetId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+
+      if (user.role !== 'admin') {
+        return res.status(403).json({ message: 'Admin access required' });
+      }
+
+      const { assetId } = req.params;
+
+      if (!mux) {
+        return res.status(503).json({ message: 'Video service not configured' });
+      }
+
+      const asset = await getAsset(assetId);
+      res.json(asset);
+    } catch (error: any) {
+      console.error("Error fetching asset:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch asset" });
+    }
+  });
+
+  // Get signed playback token (requires enrollment)
+  app.post("/api/videos/playback-token", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = req.user!;
+      const { playbackId, lessonId } = req.body;
+
+      if (!playbackId) {
+        return res.status(400).json({ message: 'playbackId is required' });
+      }
+
+      if (!mux) {
+        return res.status(503).json({ message: 'Video service not configured' });
+      }
+
+      // TODO: Verify user has enrollment for this lesson's course
+      // For now, just create the token
+
+      const token = await createSignedPlaybackUrl(playbackId);
+      res.json({ token });
+    } catch (error: any) {
+      console.error("Error creating playback token:", error);
+      res.status(500).json({ message: error.message || "Failed to create playback token" });
+    }
+  });
+
+  // Mux webhook handler
+  app.post("/api/videos/webhook", async (req, res) => {
+    try {
+      const signature = req.headers['mux-signature'] as string;
+      const webhookSecret = process.env.MUX_WEBHOOK_SECRET;
+
+      if (!webhookSecret) {
+        console.error('MUX_WEBHOOK_SECRET not configured');
+        return res.status(500).send('Webhook not configured');
+      }
+
+      if (!mux) {
+        return res.status(503).send('Mux not configured');
+      }
+
+      // Get raw body for signature verification
+      const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+
+      // Verify webhook signature
+      const isValid = verifyWebhookSignature(rawBody, signature, webhookSecret);
+
+      if (!isValid) {
+        return res.status(400).send('Invalid signature');
+      }
+
+      const event = req.body;
+
+      // Handle the event
+      switch (event.type) {
+        case 'video.asset.ready': {
+          const assetId = event.data.id;
+          const playbackIds = event.data.playback_ids;
+
+          console.log(`✅ Video asset ready: ${assetId}`);
+
+          // Update lesson with playback ID
+          // TODO: Implement storage.updateLessonByAssetId()
+
+          break;
+        }
+
+        case 'video.asset.errored': {
+          const assetId = event.data.id;
+          const errors = event.data.errors;
+
+          console.error(`❌ Video asset errored: ${assetId}`, errors);
+
+          // TODO: Handle error, notify admin
+
+          break;
+        }
+
+        case 'video.upload.asset_created': {
+          const uploadId = event.data.id;
+          const assetId = event.data.asset_id;
+
+          console.log(`✅ Upload complete: ${uploadId} -> Asset: ${assetId}`);
+
+          break;
+        }
+
+        default:
+          console.log(`Unhandled Mux event type: ${event.type}`);
+      }
+
+      res.json({ received: true });
+    } catch (error: any) {
+      console.error("Mux webhook error:", error);
+      res.status(400).send(`Webhook Error: ${error.message}`);
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

@@ -912,3 +912,410 @@ export type InsertSubmarketTrend = z.infer<typeof insertSubmarketTrendSchema>;
 export type InsertMarketAdjustment = z.infer<typeof insertMarketAdjustmentSchema>;
 export type InsertBenchmarkComparison = z.infer<typeof insertBenchmarkComparisonSchema>;
 export type InsertAdjustmentValidation = z.infer<typeof insertAdjustmentValidationSchema>;
+
+// ============================================================================
+// COURSE PLATFORM SCHEMA
+// ============================================================================
+
+// Products (courses, tools, etc.)
+export const products = pgTable("products", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description"),
+  type: text("type").$type<'course' | 'tool' | 'bundle'>().notNull().default('course'),
+  priceUsd: integer("price_usd"), // Price in cents
+  stripePriceId: text("stripe_price_id"), // Stripe price ID
+  stripeProductId: text("stripe_product_id"), // Stripe product ID
+  isActive: integer("is_active").$type<0 | 1>().notNull().default(1), // SQLite compatible boolean
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Courses
+export const courses = pgTable("courses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productId: varchar("product_id").notNull().references(() => products.id),
+  title: text("title").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description"),
+  thumbnail: text("thumbnail"), // URL to thumbnail image
+  durationMinutes: integer("duration_minutes"), // Total course duration
+  level: text("level").$type<'beginner' | 'intermediate' | 'advanced'>().default('beginner'),
+  isPublished: integer("is_published").$type<0 | 1>().notNull().default(0),
+  publishedAt: timestamp("published_at"),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Course Modules
+export const modules = pgTable("modules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  courseId: varchar("course_id").notNull().references(() => courses.id),
+  title: text("title").notNull(),
+  slug: text("slug").notNull(),
+  description: text("description"),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Lessons
+export const lessons = pgTable("lessons", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  moduleId: varchar("module_id").notNull().references(() => modules.id),
+  title: text("title").notNull(),
+  slug: text("slug").notNull(),
+  description: text("description"),
+  content: text("content"), // Markdown content
+  videoProvider: text("video_provider").$type<'mux' | 'vimeo' | 'youtube' | 'self-hosted'>(),
+  muxAssetId: text("mux_asset_id"), // Mux video asset ID
+  muxPlaybackId: text("mux_playback_id"), // Mux playback ID
+  videoUrl: text("video_url"), // Alternative video URL
+  durationSeconds: integer("duration_seconds"),
+  orderIndex: integer("order_index").notNull().default(0),
+  isDrip: integer("is_drip").$type<0 | 1>().notNull().default(0), // Drip content
+  releaseAt: timestamp("release_at"), // Drip release date
+  isPublished: integer("is_published").$type<0 | 1>().notNull().default(0),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Enrollments (user access to products/courses)
+export const enrollments = pgTable("enrollments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  productId: varchar("product_id").notNull().references(() => products.id),
+  status: text("status").$type<'active' | 'expired' | 'cancelled' | 'grace'>().notNull().default('active'),
+  source: text("source").$type<'purchase' | 'gift' | 'admin' | 'trial'>().notNull().default('purchase'),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeCustomerId: text("stripe_customer_id"),
+  expiresAt: timestamp("expires_at"), // For time-limited access
+  startedAt: timestamp("started_at").notNull().default(sql`now()`),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Lesson Progress
+export const lessonProgress = pgTable("lesson_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  lessonId: varchar("lesson_id").notNull().references(() => lessons.id),
+  percentComplete: integer("percent_complete").notNull().default(0), // 0-100
+  watchTimeSeconds: integer("watch_time_seconds").notNull().default(0),
+  isCompleted: integer("is_completed").$type<0 | 1>().notNull().default(0),
+  completedAt: timestamp("completed_at"),
+  lastWatchedAt: timestamp("last_watched_at").notNull().default(sql`now()`),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Events (append-only event log for gamification)
+export const events = pgTable("events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  eventName: text("event_name").notNull(), // 'lesson_completed', 'comment_posted', etc.
+  eventData: jsonb("event_data"), // Additional event metadata
+  occurredAt: timestamp("occurred_at").notNull().default(sql`now()`),
+});
+
+// Points Ledger (append-only)
+export const pointsLedger = pgTable("points_ledger", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  eventId: varchar("event_id").references(() => events.id),
+  points: integer("points").notNull(), // Can be positive or negative
+  reason: text("reason").notNull(), // 'lesson_completed', 'daily_cap', etc.
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+});
+
+// Badge Definitions
+export const badges = pgTable("badges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description"),
+  icon: text("icon"), // URL or emoji
+  condition: text("condition").notNull(), // 'first_lesson', 'week_streak_7', etc.
+  isActive: integer("is_active").$type<0 | 1>().notNull().default(1),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+});
+
+// User Badges (awarded badges)
+export const userBadges = pgTable("user_badges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  badgeId: varchar("badge_id").notNull().references(() => badges.id),
+  reason: text("reason"), // Why this was awarded
+  awardedAt: timestamp("awarded_at").notNull().default(sql`now()`),
+});
+
+// Lesson Comments
+export const lessonComments = pgTable("lesson_comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  lessonId: varchar("lesson_id").notNull().references(() => lessons.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  parentId: varchar("parent_id"), // For nested replies
+  content: text("content").notNull(),
+  isEdited: integer("is_edited").$type<0 | 1>().notNull().default(0),
+  isDeleted: integer("is_deleted").$type<0 | 1>().notNull().default(0),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Tool Links (connect lessons to existing appraisal tools)
+export const toolLinks = pgTable("tool_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  lessonId: varchar("lesson_id").notNull().references(() => lessons.id),
+  toolName: text("tool_name").notNull(), // 'comps', 'photos', 'market', etc.
+  toolPath: text("tool_path").notNull(), // Route path
+  description: text("description"),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+});
+
+// Relations
+export const productsRelations = relations(products, ({ many }) => ({
+  courses: many(courses),
+  enrollments: many(enrollments),
+}));
+
+export const coursesRelations = relations(courses, ({ one, many }) => ({
+  product: one(products, {
+    fields: [courses.productId],
+    references: [products.id],
+  }),
+  modules: many(modules),
+}));
+
+export const modulesRelations = relations(modules, ({ one, many }) => ({
+  course: one(courses, {
+    fields: [modules.courseId],
+    references: [courses.id],
+  }),
+  lessons: many(lessons),
+}));
+
+export const lessonsRelations = relations(lessons, ({ one, many }) => ({
+  module: one(modules, {
+    fields: [lessons.moduleId],
+    references: [modules.id],
+  }),
+  progress: many(lessonProgress),
+  comments: many(lessonComments),
+  toolLinks: many(toolLinks),
+}));
+
+export const enrollmentsRelations = relations(enrollments, ({ one }) => ({
+  user: one(users, {
+    fields: [enrollments.userId],
+    references: [users.id],
+  }),
+  product: one(products, {
+    fields: [enrollments.productId],
+    references: [products.id],
+  }),
+}));
+
+export const lessonProgressRelations = relations(lessonProgress, ({ one }) => ({
+  user: one(users, {
+    fields: [lessonProgress.userId],
+    references: [users.id],
+  }),
+  lesson: one(lessons, {
+    fields: [lessonProgress.lessonId],
+    references: [lessons.id],
+  }),
+}));
+
+export const eventsRelations = relations(events, ({ one }) => ({
+  user: one(users, {
+    fields: [events.userId],
+    references: [users.id],
+  }),
+}));
+
+export const pointsLedgerRelations = relations(pointsLedger, ({ one }) => ({
+  user: one(users, {
+    fields: [pointsLedger.userId],
+    references: [users.id],
+  }),
+  event: one(events, {
+    fields: [pointsLedger.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const badgesRelations = relations(badges, ({ many }) => ({
+  userBadges: many(userBadges),
+}));
+
+export const userBadgesRelations = relations(userBadges, ({ one }) => ({
+  user: one(users, {
+    fields: [userBadges.userId],
+    references: [users.id],
+  }),
+  badge: one(badges, {
+    fields: [userBadges.badgeId],
+    references: [badges.id],
+  }),
+}));
+
+export const lessonCommentsRelations = relations(lessonComments, ({ one }) => ({
+  lesson: one(lessons, {
+    fields: [lessonComments.lessonId],
+    references: [lessons.id],
+  }),
+  user: one(users, {
+    fields: [lessonComments.userId],
+    references: [users.id],
+  }),
+}));
+
+export const toolLinksRelations = relations(toolLinks, ({ one }) => ({
+  lesson: one(lessons, {
+    fields: [toolLinks.lessonId],
+    references: [lessons.id],
+  }),
+}));
+
+// Zod Schemas for Course Platform
+
+// Products
+export const insertProductSchema = createInsertSchema(products).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateProductSchema = insertProductSchema.partial();
+
+// Courses
+export const insertCourseSchema = createInsertSchema(courses).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateCourseSchema = insertCourseSchema.partial();
+
+// Modules
+export const insertModuleSchema = createInsertSchema(modules).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateModuleSchema = insertModuleSchema.partial();
+
+// Lessons
+export const insertLessonSchema = createInsertSchema(lessons).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateLessonSchema = insertLessonSchema.partial();
+
+// Enrollments
+export const insertEnrollmentSchema = createInsertSchema(enrollments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateEnrollmentSchema = insertEnrollmentSchema.partial();
+
+// Lesson Progress
+export const insertLessonProgressSchema = createInsertSchema(lessonProgress).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateLessonProgressSchema = insertLessonProgressSchema.partial();
+
+// Events
+export const insertEventSchema = createInsertSchema(events).omit({
+  id: true,
+  occurredAt: true,
+});
+
+// Points Ledger
+export const insertPointsLedgerSchema = createInsertSchema(pointsLedger).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Badges
+export const insertBadgeSchema = createInsertSchema(badges).omit({
+  id: true,
+  createdAt: true,
+});
+
+// User Badges
+export const insertUserBadgeSchema = createInsertSchema(userBadges).omit({
+  id: true,
+  awardedAt: true,
+});
+
+// Lesson Comments
+export const insertLessonCommentSchema = createInsertSchema(lessonComments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateLessonCommentSchema = z.object({
+  content: z.string().min(1).max(5000),
+});
+
+// Tool Links
+export const insertToolLinkSchema = createInsertSchema(toolLinks).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Type Exports
+export type Product = typeof products.$inferSelect;
+export type InsertProduct = z.infer<typeof insertProductSchema>;
+export type UpdateProduct = z.infer<typeof updateProductSchema>;
+
+export type Course = typeof courses.$inferSelect;
+export type InsertCourse = z.infer<typeof insertCourseSchema>;
+export type UpdateCourse = z.infer<typeof updateCourseSchema>;
+
+export type Module = typeof modules.$inferSelect;
+export type InsertModule = z.infer<typeof insertModuleSchema>;
+export type UpdateModule = z.infer<typeof updateModuleSchema>;
+
+export type Lesson = typeof lessons.$inferSelect;
+export type InsertLesson = z.infer<typeof insertLessonSchema>;
+export type UpdateLesson = z.infer<typeof updateLessonSchema>;
+
+export type Enrollment = typeof enrollments.$inferSelect;
+export type InsertEnrollment = z.infer<typeof insertEnrollmentSchema>;
+export type UpdateEnrollment = z.infer<typeof updateEnrollmentSchema>;
+
+export type LessonProgress = typeof lessonProgress.$inferSelect;
+export type InsertLessonProgress = z.infer<typeof insertLessonProgressSchema>;
+export type UpdateLessonProgress = z.infer<typeof updateLessonProgressSchema>;
+
+export type Event = typeof events.$inferSelect;
+export type InsertEvent = z.infer<typeof insertEventSchema>;
+
+export type PointsLedgerEntry = typeof pointsLedger.$inferSelect;
+export type InsertPointsLedgerEntry = z.infer<typeof insertPointsLedgerSchema>;
+
+export type Badge = typeof badges.$inferSelect;
+export type InsertBadge = z.infer<typeof insertBadgeSchema>;
+
+export type UserBadge = typeof userBadges.$inferSelect;
+export type InsertUserBadge = z.infer<typeof insertUserBadgeSchema>;
+
+export type LessonComment = typeof lessonComments.$inferSelect;
+export type InsertLessonComment = z.infer<typeof insertLessonCommentSchema>;
+export type UpdateLessonComment = z.infer<typeof updateLessonCommentSchema>;
+
+export type ToolLink = typeof toolLinks.$inferSelect;
+export type InsertToolLink = z.infer<typeof insertToolLinkSchema>;
